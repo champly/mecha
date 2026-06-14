@@ -1,0 +1,22 @@
+# Binaries
+/bin/
+
+# Go
+*.test
+*.out
+/vendor/
+/go.work
+/go.work.sum
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+
+# Project local
+/.claude/
