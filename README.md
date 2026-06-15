@@ -37,11 +37,17 @@ User
 ## Quick Start
 
 ```bash
+# Install
+go install github.com/champly/mecha@latest
+
+# Check version
+mecha version
+
 # Initialize config
-make init
+mecha init
 
 # Start mecha
-make run
+mecha
 ```
 
 Config: `~/.mecha/config.yaml`

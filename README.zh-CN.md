@@ -37,11 +37,17 @@
 ## 快速开始
 
 ```bash
+# 安装
+go install github.com/champly/mecha@latest
+
+# 查看版本
+mecha version
+
 # 初始化配置
-make init
+mecha init
 
 # 启动 mecha
-make run
+mecha
 ```
 
 配置：`~/.mecha/config.yaml`
