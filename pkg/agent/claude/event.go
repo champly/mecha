@@ -37,7 +37,10 @@ func (c *Claude) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 		return agenttypes.HookEvent{}, fmt.Errorf("claude: parse hook event: %w", err)
 	}
 
-	hookEventName, _ := m["hook_event_name"].(string)
+	hookEventName, ok := m["hook_event_name"].(string)
+	if !ok {
+		return agenttypes.HookEvent{}, fmt.Errorf("claude: hook_event_name missing or not a string")
+	}
 
 	event, ok := eventMap[hookEventName]
 	if !ok {

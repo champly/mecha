@@ -8,7 +8,7 @@ import (
 )
 
 // Factory creates an Agent from the given parameters.
-type Factory func(roleDir, agentID, prompt string, cfg config.AgentConfig) (Agent, error)
+type Factory func(roleDir, agentID, prompt string, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
 
 // Agent is the interface all agent types must implement.
 type Agent interface {

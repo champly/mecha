@@ -36,9 +36,11 @@ func newAskCmd() *cobra.Command {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-				fmt.Fprintf(os.Stderr, "%s\n", errBody)
-				os.Exit(1)
+				body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+				if readErr != nil {
+					return fmt.Errorf("ask: server returned %d (failed to read body: %w)", resp.StatusCode, readErr)
+				}
+				return fmt.Errorf("ask: server returned %d: %s", resp.StatusCode, string(body))
 			}
 
 			io.Copy(os.Stdout, resp.Body)

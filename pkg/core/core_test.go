@@ -3,9 +3,11 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ type mockBackend struct {
 	spawned []term.PaneSpec
 	sent    map[string][]string
 	killed  map[string]bool
+	sendErr error // if non-nil, Send returns this error
 }
 
 func newMockBackend() *mockBackend {
@@ -37,6 +40,9 @@ func (m *mockBackend) Spawn(_ context.Context, spec term.PaneSpec) (term.PaneHan
 }
 
 func (m *mockBackend) Send(_ context.Context, handle term.PaneHandle, text string) error {
+	if m.sendErr != nil {
+		return m.sendErr
+	}
 	m.sent[handle.ID()] = append(m.sent[handle.ID()], text)
 	return nil
 }
@@ -87,6 +93,7 @@ func testCore(t *testing.T) (*Core, *mockBackend) {
 		agentByID:         make(map[string]types.Agent),
 		instanceByAgentID: make(map[string]*instance),
 		logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logFile:           nil,
 	}
 	return c, backend
 }
@@ -282,11 +289,27 @@ func TestAsk_ContextCanceled(t *testing.T) {
 }
 
 func TestAsk_SendErrorResetsStatus(t *testing.T) {
-	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusRunning)
-	// The mock backend always succeeds, so we'd need to test this differently.
-	// For now, just verify the happy path already tested above sets status back to running.
-	_ = inst
+	c, backend := testCore(t)
+	addAgent(c, "agent-1", StatusRunning)
+
+	// Make Send return an error to verify status is reset.
+	backend.sendErr = fmt.Errorf("send failed")
+
+	_, err := c.Ask(context.Background(), "test-role", "do something")
+	if err == nil {
+		t.Fatal("expected send error")
+	}
+	if err.Error() == "" || !strings.Contains(err.Error(), "send failed") {
+		t.Errorf("expected send failed error, got: %v", err)
+	}
+
+	inst := c.specialists["test-role"]
+	if inst == nil {
+		t.Fatal("instance should still exist")
+	}
+	if inst.status != StatusRunning {
+		t.Errorf("status should be running after send error, got %q", inst.status)
+	}
 }
 
 // ---------------------------------------------------------------------------

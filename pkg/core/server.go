@@ -11,6 +11,8 @@ import (
 	"github.com/champly/mecha/pkg/agent/types"
 )
 
+const maxRequestBody = 1 << 20 // 1 MiB
+
 func (c *Core) startHTTPServer(ln net.Listener) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/", c.handleWebhook)
@@ -38,7 +40,7 @@ func (c *Core) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -65,7 +67,7 @@ func (c *Core) handleAsk(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 		Task string `json:"task"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

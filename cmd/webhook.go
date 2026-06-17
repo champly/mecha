@@ -29,7 +29,10 @@ func newWebhookCmd() *cobra.Command {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+				body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+				if readErr != nil {
+					return fmt.Errorf("webhook: server returned %d (failed to read body: %w)", resp.StatusCode, readErr)
+				}
 				return fmt.Errorf("webhook: server returned %d: %s", resp.StatusCode, string(body))
 			}
 			return nil

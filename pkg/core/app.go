@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 
 	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -37,6 +38,7 @@ type taskResult struct {
 type Core struct {
 	workspace string
 	cfg       config.Config
+	runtime   config.Runtime
 	backend   term.PaneBackend
 
 	coordinator       types.Agent
@@ -44,7 +46,8 @@ type Core struct {
 	agentByID         map[string]types.Agent
 	instanceByAgentID map[string]*instance
 
-	logger *slog.Logger
+	logger  *slog.Logger
+	logFile *os.File
 }
 
 // New creates a Core for the given workspace and config.
@@ -54,7 +57,7 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		return nil, fmt.Errorf("core: %w", err)
 	}
 
-	logger, err := initLogger(workspace)
+	logger, logFile, err := initLogger(workspace)
 	if err != nil {
 		return nil, fmt.Errorf("core: init logger: %w", err)
 	}
@@ -67,11 +70,22 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		agentByID:         make(map[string]types.Agent),
 		instanceByAgentID: make(map[string]*instance),
 		logger:            logger,
+		logFile:           logFile,
 	}, nil
+}
+
+// Close releases resources held by Core (log file, etc.).
+func (c *Core) Close() error {
+	if c.logFile != nil {
+		return c.logFile.Close()
+	}
+	return nil
 }
 
 // Start launches the HTTP server and the coordinator agent.
 func (c *Core) Start(ctx context.Context) error {
+	defer c.Close()
+
 	roleName := c.coordinatorRole()
 	if roleName == "" {
 		return fmt.Errorf("core: no coordinator role found in profile %q", c.cfg.Profile)
@@ -81,11 +95,15 @@ func (c *Core) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("core: listen: %w", err)
 	}
-	config.WebhookPort = fmt.Sprintf("%d", ln.Addr().(*net.TCPAddr).Port)
-	c.logger.Info("http server listening", "addr", "127.0.0.1:"+config.WebhookPort)
+	port := fmt.Sprintf("%d", ln.Addr().(*net.TCPAddr).Port)
+	c.logger.Info("http server listening", "addr", "127.0.0.1:"+port)
 
 	srv := c.startHTTPServer(ln)
 
+	c.runtime = config.Runtime{
+		MechaBinary: config.MechaBinary,
+		WebhookPort: port,
+	}
 	a, err := c.createAgent(roleName)
 	if err != nil {
 		return err

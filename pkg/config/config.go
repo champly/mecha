@@ -26,14 +26,21 @@ func RoleDir(workspace, roleName string) string {
 	return filepath.Join(workspace, configDirName, rolesDirName, roleName)
 }
 
-// MechaBinary is the path to the mecha binary used for webhook callbacks.
-// It defaults to "mecha" (resolved from PATH). Override at build time or
-// set programmatically before creating agents.
+// MechaBinary is the default path to the mecha binary, used for webhook
+// callbacks. Override at build time with ldflags:
+//
+//	-X github.com/champly/mecha/pkg/config.MechaBinary=/custom/path
+//
+// Core reads this at startup to populate [Runtime.MechaBinary].
 var MechaBinary = "mecha"
 
-// WebhookPort is the port the HTTP server listens on for webhook callbacks.
-// It is set by [core.Core] before preparing agents.
-var WebhookPort string
+// Runtime holds values that are determined at startup and needed throughout
+// the agent lifecycle. It is passed explicitly to avoid hidden coupling
+// between core, agent, and provider packages.
+type Runtime struct {
+	MechaBinary string // path to mecha binary (from config.MechaBinary by default)
+	WebhookPort string // HTTP server port, set after bind
+}
 
 // MechaDir returns the path to the mecha global directory (~/.mecha).
 func MechaDir() (string, error) {
@@ -177,6 +184,15 @@ func (c Config) validate() error {
 }
 
 // complete normalizes and enriches config for later usage.
+// It mutates c in place and must only be called once, immediately after
+// validate(), before any concurrent access.
+//
+// The c.Profiles[profileName] = profile reassignment below ensures the
+// map entry is replaced with the updated copy. Although element-level
+// mutations via &profile.Roles[i] share the underlying array and would
+// be visible without write-back, reassigning the map entry guards against
+// future code that might append to Roles (which would create a new array
+// local to the copy).
 func (c *Config) complete() {
 	c.Agent = strings.TrimSpace(c.Agent)
 	c.Profile = strings.TrimSpace(c.Profile)
@@ -286,8 +302,6 @@ func cloneParams(src map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	dst := make(map[string]any, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 	return dst
 }

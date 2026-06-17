@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
 
@@ -24,7 +25,7 @@ func Register(name string, factory types.Factory) {
 }
 
 // New creates an Agent for the given role within the workspace.
-func New(workspace string, roleName string, cfg config.Config) (types.Agent, error) {
+func New(workspace string, roleName string, cfg config.Config, runtime config.Runtime) (types.Agent, error) {
 	profile, ok := cfg.Profiles[cfg.Profile]
 	if !ok {
 		return nil, fmt.Errorf("agent: unknown profile %q", cfg.Profile)
@@ -48,8 +49,8 @@ func New(workspace string, roleName string, cfg config.Config) (types.Agent, err
 
 	roleDir := config.RoleDir(workspace, roleName)
 	agentID := uuid.NewString()
-	prompt := renderPrompt(workspace, config.MechaBinary, *role, profile.Roles)
-	return factory(roleDir, agentID, prompt, role.Agent)
+	prompt := renderPrompt(workspace, runtime, *role, profile.Roles)
+	return factory(roleDir, agentID, prompt, role.Agent, runtime)
 }
 
 const promptTemplate = `<your_assigned_role>
@@ -83,14 +84,14 @@ type promptData struct {
 
 var tmpl = template.Must(template.New("prompt").Funcs(template.FuncMap{
 	"firstLine": func(s string) string {
-		if idx := strings.IndexAny(s, "\n.。"); idx > 0 {
+		if idx := strings.IndexAny(s, "\n。"); idx > 0 {
 			return s[:idx]
 		}
 		return s
 	},
 }).Parse(promptTemplate))
 
-func renderPrompt(workspace, mechaBinary string, role config.Role, allRoles []config.Role) string {
+func renderPrompt(workspace string, runtime config.Runtime, role config.Role, allRoles []config.Role) string {
 	otherRoles := make([]config.Role, 0, len(allRoles))
 	for _, r := range allRoles {
 		if r.Name != role.Name {
@@ -101,11 +102,12 @@ func renderPrompt(workspace, mechaBinary string, role config.Role, allRoles []co
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, promptData{
 		Workspace:    workspace,
-		MechaBinary:  mechaBinary,
-		WebhookPort:  config.WebhookPort,
+		MechaBinary:  runtime.MechaBinary,
+		WebhookPort:  runtime.WebhookPort,
 		Role:         role,
 		OtherRoles:   otherRoles,
 	}); err != nil {
+		slog.Warn("prompt template render failed, falling back to raw prompt", "role", role.Name, "err", err)
 		return role.Prompt
 	}
 	return buf.String()

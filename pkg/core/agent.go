@@ -11,8 +11,13 @@ import (
 	"github.com/champly/mecha/pkg/term"
 )
 
+const (
+	agentStartTimeout  = 30 * time.Second
+	defaultTaskTimeout = 30 * time.Minute
+)
+
 func (c *Core) createAgent(roleName string) (types.Agent, error) {
-	a, err := agent.New(c.workspace, roleName, c.cfg)
+	a, err := agent.New(c.workspace, roleName, c.cfg, c.runtime)
 	if err != nil {
 		return nil, fmt.Errorf("core: create agent %q: %w", roleName, err)
 	}
@@ -46,9 +51,16 @@ func (c *Core) Ask(ctx context.Context, roleName, task string) (taskResult, erro
 
 	select {
 	case result := <-inst.result:
+		inst.result = nil // prevent cleanup from sending a stale result
 		inst.status = StatusRunning
 		return result, nil
+	case <-time.After(defaultTaskTimeout):
+		inst.result = nil
+		c.logger.Warn("task timed out, killing specialist", "role", roleName)
+		c.cleanupSpecialist(ctx, inst, roleName)
+		return taskResult{}, fmt.Errorf("core: task %q timed out after %v", roleName, defaultTaskTimeout)
 	case <-ctx.Done():
+		inst.result = nil
 		inst.status = StatusRunning
 		return taskResult{}, ctx.Err()
 	}
@@ -92,13 +104,24 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 	case <-inst.ready:
 		inst.status = StatusRunning
 		c.logger.Info("agent ready", "role", roleName)
-	case <-time.After(30 * time.Second):
+		return inst, nil
+	case <-time.After(agentStartTimeout):
+		c.cleanupSpecialist(ctx, inst, roleName)
 		return nil, fmt.Errorf("core: agent %q start timeout", roleName)
 	case <-ctx.Done():
+		c.cleanupSpecialist(ctx, inst, roleName)
 		return nil, ctx.Err()
 	}
+}
 
-	return inst, nil
+// cleanupSpecialist kills a specialist pane and removes its tracking entries.
+func (c *Core) cleanupSpecialist(ctx context.Context, inst *instance, roleName string) {
+	c.logger.Warn("cleaning up specialist", "role", roleName)
+	if err := c.backend.Kill(ctx, inst.handle); err != nil {
+		c.logger.Error("kill specialist after timeout failed", "role", roleName, "err", err)
+	}
+	delete(c.specialists, roleName)
+	delete(c.instanceByAgentID, inst.agent.ID())
 }
 
 func envToMap(env []string) map[string]string {

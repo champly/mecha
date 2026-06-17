@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/champly/mecha/pkg/agent/types"
 )
 
-func (c *Core) launchCoordinator(_ context.Context, a types.Agent, srv *http.Server) error {
+func (c *Core) launchCoordinator(ctx context.Context, a types.Agent, srv *http.Server) error {
 	cmd := a.Cmd()
 	cmd.Env = append(os.Environ(), cmd.Env...)
 	c.logger.Info("starting agent", "role", "coordinator", "args", cmd.Args)
@@ -39,19 +40,28 @@ func (c *Core) launchCoordinator(_ context.Context, a types.Agent, srv *http.Ser
 	signal.Stop(sigCh)
 	close(sigCh)
 
+	// Shut down the HTTP server first so no new /ask requests can arrive
+	// while we tear down specialist instances.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	srv.Shutdown(shutdownCtx)
+
 	// Cleanup: kill all specialist panes and cancel waiting Asks.
 	for roleName, inst := range c.specialists {
 		c.logger.Info("killing specialist", "role", roleName)
 		if inst.result != nil {
-			inst.result <- taskResult{err: "coordinator exited"}
+			select {
+			case inst.result <- taskResult{err: "coordinator exited"}:
+			default:
+				// The Ask goroutine already consumed the result (or will shortly).
+			}
 		}
-		if err := c.backend.Kill(context.Background(), inst.handle); err != nil {
+		if err := c.backend.Kill(ctx, inst.handle); err != nil {
 			c.logger.Error("kill specialist failed", "role", roleName, "err", err)
 		}
 	}
 	c.specialists = make(map[string]*instance)
 	c.instanceByAgentID = make(map[string]*instance)
 
-	srv.Shutdown(context.Background())
 	return waitErr
 }

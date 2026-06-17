@@ -11,22 +11,22 @@ import (
 	"github.com/champly/mecha/pkg/config"
 )
 
-func initLogger(workspace string) (*slog.Logger, error) {
+func initLogger(workspace string) (*slog.Logger, *os.File, error) {
 	dir, err := config.MechaDir()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace)))[:8]
 	logDir := filepath.Join(dir, "logs", hash)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return nil, fmt.Errorf("core: create log dir %q: %w", logDir, err)
+		return nil, nil, fmt.Errorf("core: create log dir %q: %w", logDir, err)
 	}
 
 	path := filepath.Join(logDir, time.Now().Format(time.DateOnly)+".log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("core: open log file %q: %w", path, err)
+		return nil, nil, fmt.Errorf("core: open log file %q: %w", path, err)
 	}
 
 	return slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{
@@ -39,5 +39,5 @@ func initLogger(workspace string) (*slog.Logger, error) {
 			}
 			return a
 		},
-	})), nil
+	})), f, nil
 }

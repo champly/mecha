@@ -16,7 +16,7 @@ init:
 	go run . init
 
 run:
-	go build -ldflags "$(LDFLAGS)" -o $(GOPATH_BIN)/mecha . && mecha
+	go build -ldflags "$(LDFLAGS)" -o $(GOPATH_BIN)/mecha . && $(GOPATH_BIN)/mecha
 
 clean:
 	rm -rf bin/

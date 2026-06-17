@@ -18,8 +18,12 @@ func testAgentConfig() config.AgentConfig {
 	}
 }
 
+func testRuntime() config.Runtime {
+	return config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
+}
+
 func testNew(dir, agentID, prompt string) *Claude {
-	a, _ := New(dir, agentID, prompt, testAgentConfig())
+	a, _ := New(dir, agentID, prompt, testAgentConfig(), testRuntime())
 	return a.(*Claude)
 }
 
@@ -52,7 +56,7 @@ func TestWriteSettings(t *testing.T) {
 		t.Fatalf("read settings.json: %v", err)
 	}
 
-	if !strings.Contains(string(data), config.MechaBinary) {
+	if !strings.Contains(string(data), c.mechaBinary) {
 		t.Errorf("settings.json missing mecha path, got: %s", data)
 	}
 	if !strings.Contains(string(data), "agent-123") {

@@ -8,10 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
 )
+
+const claudeBinary = "claude"
 
 var (
 	defaultParams = map[string]any{
@@ -24,16 +27,24 @@ var (
 
 // Claude handles the Claude Code agent type for a specific role.
 type Claude struct {
-	roleDir string
-	agentID string
-	prompt  string
-
-	cfg config.AgentConfig
+	roleDir      string
+	agentID      string
+	prompt       string
+	cfg          config.AgentConfig
+	mechaBinary  string
+	webhookPort  string
 }
 
 // New returns a Claude agent helper.
-func New(roleDir, agentID, prompt string, cfg config.AgentConfig) (agenttypes.Agent, error) {
-	return &Claude{roleDir: roleDir, agentID: agentID, prompt: prompt, cfg: cfg}, nil
+func New(roleDir, agentID, prompt string, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
+	return &Claude{
+		roleDir:     roleDir,
+		agentID:     agentID,
+		prompt:      prompt,
+		cfg:         cfg,
+		mechaBinary: runtime.MechaBinary,
+		webhookPort: runtime.WebhookPort,
+	}, nil
 }
 
 // ID returns the agent's unique identifier.
@@ -78,8 +89,8 @@ func (c *Claude) writeSettings() error {
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",
-						"command": config.MechaBinary,
-						"args":    []string{"webhook", "--id", c.agentID, "--port", config.WebhookPort},
+						"command": c.mechaBinary,
+						"args":    []string{"webhook", "--id", c.agentID, "--port", c.webhookPort},
 					},
 				},
 			},
@@ -110,7 +121,15 @@ func (c *Claude) Cmd() *exec.Cmd {
 	}
 
 	params := merge(c.cfg.Params, defaultParams)
-	for k, v := range params {
+
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := params[k]
 		if b, ok := v.(bool); ok && b {
 			args = append(args, "--"+k)
 		} else {
@@ -121,7 +140,7 @@ func (c *Claude) Cmd() *exec.Cmd {
 	// Pre-authorize the role directory so Claude Code skips the trust dialog.
 	args = append(args, "--add-dir", c.roleDir)
 
-	cmd := exec.Command("claude", args...)
+	cmd := exec.Command(claudeBinary, args...)
 	cmd.Dir = c.roleDir
 	for k, v := range merge(c.cfg.Envs, defaultEnvs) {
 		cmd.Env = append(cmd.Env, k+"="+v)
