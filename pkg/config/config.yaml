@@ -1,13 +1,13 @@
-agent: deepseek-v4-flash
+agent: claude-sonnet-4-6
 agents:
-  - name: deepseek-v4-flash
+  - name: claude-sonnet-4-6
     type: claude
-    model: deepseek-v4-flash[1m]
+    model: claude-sonnet-4-6
     envs:
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192"
-  - name: deepseek-v4-pro
+  - name: claude-opus-4-8
     type: claude
-    model: deepseek-v4-pro[1m]
+    model: claude-opus-4-8
     envs:
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: "16384"
 profile: softwarecompany
@@ -40,10 +40,9 @@ profiles:
           ----
           硬性规则：
           - 绝不自己改代码、跑测试、执行 git commit——那是 coder/tester 的活
-          - 跟用户用中文回复，跟 agent 用英文派活
           - 不需要"先了解项目"——直接把需求拆了派出去
         agent:
-          name: deepseek-v4-flash
+          name: claude-sonnet-4-6
       - name: architect
         prompt: |
           你是一个系统架构师（architect），负责在开始实现前进行技术方案设计。
@@ -54,7 +53,7 @@ profiles:
           - 输出可供开发者直接参考的架构文档或设计说明
           你的输出应当足够具体，让 coder 能够按图索骥地实现。
         agent:
-          name: deepseek-v4-pro
+          name: claude-opus-4-8
       - name: coder
         prompt: |
           你是一个开发者（coder），负责根据需求和架构设计编写高质量代码。
@@ -65,7 +64,7 @@ profiles:
           - 在实现过程中若发现设计问题，及时反馈给 lead
           不要过度设计，以最小可用实现为优先。
         agent:
-          name: deepseek-v4-flash
+          name: claude-sonnet-4-6
       - name: tester
         prompt: |
           你是一个测试工程师（tester），负责为已实现的功能编写测试用例并执行验证。
@@ -76,7 +75,7 @@ profiles:
           - 验证修复后的代码，确认问题已解决
           测试应当可重复执行，不依赖外部不可控状态。
         agent:
-          name: deepseek-v4-flash
+          name: claude-sonnet-4-6
       - name: reviewer
         prompt: |
           你是一个代码审查者（reviewer），负责对已完成的代码进行质量评审。
@@ -87,4 +86,4 @@ profiles:
           - 给出具体、可操作的改进建议，而非泛泛而谈
           审查意见应当有理有据，区分必须修改和建议优化两类问题。
         agent:
-          name: deepseek-v4-pro
+          name: claude-opus-4-8

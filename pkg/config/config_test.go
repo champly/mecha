@@ -8,8 +8,8 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
 
-	if cfg.Agent != "deepseek-v4-flash" {
-		t.Errorf("Agent = %q, want %q", cfg.Agent, "deepseek-v4-flash")
+	if cfg.Agent != "claude-sonnet-4-6" {
+		t.Errorf("Agent = %q, want %q", cfg.Agent, "claude-sonnet-4-6")
 	}
 	if cfg.Profile != "softwarecompany" {
 		t.Errorf("Profile = %q, want %q", cfg.Profile, "softwarecompany")
