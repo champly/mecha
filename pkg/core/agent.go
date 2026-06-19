@@ -79,7 +79,7 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 	cmd := a.Cmd()
 	c.logger.Info("starting agent", "role", roleName, "args", cmd.Args)
 
-	handle, err := c.backend.Spawn(ctx, term.PaneSpec{
+	handle, err := c.backend.Spawn(ctx, term.Spec{
 		WorkDir: cmd.Dir,
 		Command: cmd.Args,
 		Env:     envToMap(cmd.Env),

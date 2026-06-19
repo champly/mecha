@@ -21,7 +21,7 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockBackend struct {
-	spawned []term.PaneSpec
+	spawned []term.Spec
 	sent    map[string][]string
 	killed  map[string]bool
 	sendErr error // if non-nil, Send returns this error
@@ -34,12 +34,12 @@ func newMockBackend() *mockBackend {
 	}
 }
 
-func (m *mockBackend) Spawn(_ context.Context, spec term.PaneSpec) (term.PaneHandle, error) {
+func (m *mockBackend) Spawn(_ context.Context, spec term.Spec) (term.Handle, error) {
 	m.spawned = append(m.spawned, spec)
 	return mockHandle{id: spec.WorkDir}, nil
 }
 
-func (m *mockBackend) Send(_ context.Context, handle term.PaneHandle, text string) error {
+func (m *mockBackend) Send(_ context.Context, handle term.Handle, text string) error {
 	if m.sendErr != nil {
 		return m.sendErr
 	}
@@ -47,10 +47,10 @@ func (m *mockBackend) Send(_ context.Context, handle term.PaneHandle, text strin
 	return nil
 }
 
-func (m *mockBackend) Capture(_ context.Context, _ term.PaneHandle) (string, error)  { return "", nil }
-func (m *mockBackend) CaptureAll(_ context.Context, _ term.PaneHandle) (string, error) { return "", nil }
+func (m *mockBackend) Capture(_ context.Context, _ term.Handle) (string, error)  { return "", nil }
+func (m *mockBackend) CaptureAll(_ context.Context, _ term.Handle) (string, error) { return "", nil }
 
-func (m *mockBackend) Kill(_ context.Context, handle term.PaneHandle) error {
+func (m *mockBackend) Kill(_ context.Context, handle term.Handle) error {
 	m.killed[handle.ID()] = true
 	return nil
 }

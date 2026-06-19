@@ -23,7 +23,7 @@ const (
 type instance struct {
 	role   string
 	agent  types.Agent
-	handle term.PaneHandle
+	handle term.Handle
 	status string          // starting | running | busy
 	ready  chan struct{}   // closed when SessionStart arrives
 	result chan taskResult // per-task completion signal
@@ -39,7 +39,7 @@ type Core struct {
 	workspace string
 	cfg       config.Config
 	runtime   config.Runtime
-	backend   term.PaneBackend
+	backend   term.Backend
 
 	coordinator       types.Agent
 	specialists       map[string]*instance
@@ -52,7 +52,7 @@ type Core struct {
 
 // New creates a Core for the given workspace and config.
 func New(workspace string, cfg config.Config) (*Core, error) {
-	backend, err := term.NewAutoProvider()
+	backend, err := term.New()
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
