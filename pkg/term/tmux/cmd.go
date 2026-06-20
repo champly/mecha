@@ -62,7 +62,9 @@ func sendLiteral(ctx context.Context, paneID, text string) error {
 }
 
 func sendEnter(ctx context.Context, paneID string) error {
-	_, err := tmux(ctx, "send-keys", "-t", paneID, "C-m")
+	// C-m (\r) alone causes carriage return without line feed.
+	// C-m followed by C-j (\n) gives the terminal both \r\n.
+	_, err := tmux(ctx, "send-keys", "-t", paneID, "C-m", "C-j")
 	return err
 }
 

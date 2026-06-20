@@ -88,7 +88,9 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	}
 
 	if cmd != "" {
-		if err := p.conn.sendText(sessionID, cmd+"\n"); err != nil {
+		// \n alone causes line feed without carriage return.
+		// \r\n gives the terminal both: cursor to column 0 + down one line.
+		if err := p.conn.sendText(sessionID, cmd+"\r\n"); err != nil {
 			return nil, err
 		}
 	}
@@ -104,6 +106,10 @@ func (p *ITerm2) Send(ctx context.Context, h driver.Handle, text string) error {
 	if err := p.ensureConn(); err != nil {
 		return err
 	}
+
+	// \n alone causes line feed without carriage return.
+	// Replace with \r\n so the terminal gets both cursor reset and line feed.
+	text = strings.ReplaceAll(text, "\n", "\r\n")
 	return p.conn.sendText(h.PaneID(), text)
 }
 

@@ -1,6 +1,6 @@
 # mecha
 
-Multi-agent orchestration system. ([中文](README.zh-CN.md)) The Lead breaks down requirements and dispatches tasks to specialists via `mecha ask`, with task state driven by Hook events.
+Multi-agent orchestration system. ([中文](README.zh-CN.md)) The Coordinator breaks down requirements and dispatches tasks to specialists via `mecha ask`, with task state driven by Hook events.
 
 ## How It Works
 
@@ -9,7 +9,7 @@ User
  │
  ▼
 ┌─────────────────────────────────────────────────────────┐
-│  Lead (current terminal)                                │
+│  Coordinator (current terminal)                       │
 │                                                         │
 │  Receive → Decompose → mecha ask <role> "<task>"        │
 │                                                         │
@@ -26,15 +26,25 @@ User
 │  │ (pane)   │  │ (pane)   │  │ (pane)   │             │
 │  └──────────┘  └──────────┘  └──────────┘             │
 │                                                         │
-│  Task done → Lead aggregates → returns to User           │
+│  Task done → Coordinator aggregates → returns to User  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **Lead**: Receives requirements, decomposes tasks, dispatches — never executes directly.
+- **Coordinator**: Receives requirements, decomposes tasks, dispatches — never executes directly.
 - **Specialists**: Execute tasks in independent panes (architect / coder / tester / reviewer).
 - **Hook Events**: `SessionStart` (boot complete), `Stop` (task success), `StopFailure` (task failure) drive state transitions.
 
 ## Quick Start
+
+### Terminal Setup
+
+**iTerm2** requires the Python API (WebSocket) to be enabled:
+
+1. Open iTerm2 → **Preferences** (`⌘,`)
+2. Go to **General** → **Magic**
+3. Enable **✓ Enable Python API**
+
+**tmux** and **Ghostty** work out of the box.
 
 ```bash
 # Install

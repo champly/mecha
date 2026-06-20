@@ -11,6 +11,7 @@
 # Editor
 .idea/
 .vscode/
+.mecha
 *.swp
 *.swo
 *~

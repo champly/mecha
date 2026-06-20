@@ -34,7 +34,7 @@ func TestNew(t *testing.T) {
 		for i := range 3 {
 			h, err := backend.Spawn(ctx, term.Spec{
 				WorkDir: "/tmp",
-				Command: []string{"sleep", "30"},
+				Command: []string{"sh", "-c", "date; exec sleep 30"},
 			})
 			if err != nil {
 				t.Fatalf("spawn %d: %v", i+1, err)
@@ -48,7 +48,7 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("kill", func(t *testing.T) {
-		time.Sleep(3 * time.Second)
+		time.Sleep(1 * time.Second)
 		for i, h := range handles {
 			if err := backend.Kill(ctx, h); err != nil {
 				t.Fatalf("kill %d: %v", i+1, err)
