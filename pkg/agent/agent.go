@@ -50,7 +50,7 @@ func New(workspace string, roleName string, cfg config.Config, runtime config.Ru
 	ctx := types.AgentContext{
 		Workspace: workspace,
 		RoleDir:   config.RoleDir(workspace, roleName),
-		Prompt:    renderPrompt(runtime, *role, profile.Roles),
+		Prompt:    renderPrompt(workspace, runtime, *role, profile.Roles),
 		AgentID:   uuid.NewString(),
 	}
 	return factory(ctx, role.Agent, runtime)
@@ -59,6 +59,11 @@ func New(workspace string, roleName string, cfg config.Config, runtime config.Ru
 const promptTemplate = `<your_assigned_role>
 {{.Role.Prompt -}}
 </your_assigned_role>
+
+<working_directory>
+IMPORTANT: You were started in this directory to receive the above role assignment. The actual project you should be working on is located at:
+{{.Workspace}}
+</working_directory>
 {{if .Role.IsCoordinator -}}
 
 <available_roles>
@@ -73,6 +78,7 @@ Available roles:
 {{end}}`
 
 type promptData struct {
+	Workspace   string
 	MechaBinary string
 	WebhookPort string
 	Role        config.Role
@@ -88,7 +94,7 @@ var tmpl = template.Must(template.New("prompt").Funcs(template.FuncMap{
 	},
 }).Parse(promptTemplate))
 
-func renderPrompt(runtime config.Runtime, role config.Role, allRoles []config.Role) string {
+func renderPrompt(workspace string, runtime config.Runtime, role config.Role, allRoles []config.Role) string {
 	otherRoles := make([]config.Role, 0, len(allRoles))
 	for _, r := range allRoles {
 		if r.Name != role.Name {
@@ -98,6 +104,7 @@ func renderPrompt(runtime config.Runtime, role config.Role, allRoles []config.Ro
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, promptData{
+		Workspace:   workspace,
 		MechaBinary: runtime.MechaBinary,
 		WebhookPort: runtime.WebhookPort,
 		Role:        role,

@@ -206,8 +206,9 @@ mecha run
 
 ```
 <workspace>/.mecha/roles/<role-name>/
-├── CLAUDE.md                          # 用户级 CLAUDE.md（role prompt），通过 CLAUDE_CONFIG_DIR 加载
-└── settings.json                      # 用户级 settings（hooks），通过 CLAUDE_CONFIG_DIR 加载
+├── CLAUDE.md                          # role prompt，agent 启动目录为 roleDir 自动加载
+└── .claude/
+    └── settings.json                  # hook 配置，agent 启动目录为 roleDir 自动加载
 ```
 
 ### 4.3 settings.json
@@ -480,8 +481,8 @@ var eventMap = map[string]string{
 
 ```go
 type AgentContext struct {
-    Workspace string  // 项目根目录 (cmd.Dir)
-    RoleDir   string  // CLAUDE_CONFIG_DIR 指向的目录
+    Workspace string  // 项目根目录
+    RoleDir   string  // agent 专属文件目录（CLAUDE.md、.claude/settings.json）
     Prompt    string  // role prompt，写入 CLAUDE.md
     AgentID   string  // agent 唯一标识 UUID
 }
@@ -502,16 +503,21 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 
 **Prepare() 步骤：**
 1. 创建 `<roleDir>/` 目录
-2. 写入 `CLAUDE.md`（rendered prompt，作为用户级 CLAUDE.md 被加载）
-3. 写入 `settings.json`（hooks 配置，作为用户级 settings 被加载）
+2. 写入 `CLAUDE.md`（rendered prompt，agent 启动目录为 roleDir 自动加载）
+3. 创建 `<roleDir>/.claude/` 目录，写入 `settings.json`（hooks 配置）
 
 **Cmd() 构建逻辑：**
 - `--model <model>`
+- `--add-dir <roleDir>` 跳过 trust dialog
 - 合并 user params 和 `defaultParams`（`dangerously-skip-permissions: true`），按字母序输出
-- 设置环境变量 `CLAUDE_CONFIG_DIR=<roleDir>` 实现 agent 配置隔离
-- 工作目录 = `<workspace>`（项目根目录）
+- 工作目录 = `<roleDir>`（agent 启动后自动发现 CLAUDE.md 和 .claude/settings.json）
 - 合并 user envs 和 `defaultEnvs`（`BASH_DEFAULT_TIMEOUT_MS: 1200000`）
 - 如果 `AgentConfig.Binary` 非空则使用指定 binary，否则默认 `claude`
+
+**配置隔离策略：**
+- 每个 agent 在独立的 roleDir 下启动，Claude Code 以 roleDir 为工作目录
+- roleDir 下的 `CLAUDE.md` 和 `.claude/settings.json` 被自动发现，与用户全局 `~/.claude/` 配置叠加
+- 全局 MCP servers、credentials 等配置保持不变，所有 agent 共享
 
 ---
 
@@ -620,7 +626,7 @@ docs/
 | pane 分割策略 | 首次垂直（右侧），后续水平（下方） |
 | 后端优先级 | tmux > iTerm2 > Ghostty |
 | send 行终止符 | `\r\n`（CR+LF），确保终端正确显示和命令执行 |
-| Prepare trust dialog | 通过 `CLAUDE_CONFIG_DIR` 和 `dangerously-skip-permissions` 跳过，无需 `--add-dir` |
+| Prepare trust dialog | 通过 `--add-dir <roleDir>` 和 `dangerously-skip-permissions` 跳过 |
 | Coordinator 特殊化 | 启动方式不同（子进程 vs pane），未统一模型 |
 | 任务超时 | 30 分钟，超时 Kill Specialist + 返回错误 |
 | agent 启动超时 | 30 秒等待 SessionStart |

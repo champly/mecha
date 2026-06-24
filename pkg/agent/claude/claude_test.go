@@ -37,9 +37,6 @@ func testNew(workspace, roleDir, agentID, prompt string) *Claude {
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "test prompt")
 
-	if c.workspace != "/ws" {
-		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
-	}
 	if c.roleDir != "/ws/.mecha/roles/lead" {
 		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
 	}
@@ -77,7 +74,7 @@ func TestWriteSettings(t *testing.T) {
 		t.Fatalf("writeSettings() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(c.roleDir, "settings.json"))
+	data, err := os.ReadFile(filepath.Join(c.roleDir, ".claude", "settings.json"))
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
 	}
@@ -107,28 +104,29 @@ func TestPrepare(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(c.roleDir, "CLAUDE.md")); err != nil {
 		t.Errorf("CLAUDE.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(c.roleDir, "settings.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(c.roleDir, ".claude", "settings.json")); err != nil {
 		t.Errorf("settings.json not created: %v", err)
 	}
 }
 
 func TestCmd(t *testing.T) {
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-001", "prompt")
+	roleDir := filepath.Join(dir, "role")
+	c := testNew(dir, roleDir, "agent-001", "prompt")
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.workspace {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.workspace)
+	if cmd.Dir != c.roleDir {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.roleDir)
 	}
 
-	foundConfigDir := slices.Contains(cmd.Env, "CLAUDE_CONFIG_DIR="+c.roleDir)
-	if !foundConfigDir {
-		t.Errorf("CLAUDE_CONFIG_DIR not found in cmd.Env, got: %v", cmd.Env)
+	if !slices.Contains(cmd.Args, "--add-dir") {
+		t.Errorf("--add-dir should be present in args: %v", cmd.Args)
 	}
 
-	foundAddDir := slices.Contains(cmd.Args, "--add-dir")
-	if foundAddDir {
-		t.Errorf("--add-dir should not be present in args: %v", cmd.Args)
+	for _, env := range cmd.Env {
+		if strings.Contains(env, "CLAUDE_CONFIG_DIR") {
+			t.Errorf("CLAUDE_CONFIG_DIR should not be in env, got: %v", cmd.Env)
+		}
 	}
 }

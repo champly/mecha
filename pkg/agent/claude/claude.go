@@ -27,7 +27,6 @@ var (
 
 // Claude handles the Claude Code agent type for a specific role.
 type Claude struct {
-	workspace   string
 	roleDir     string
 	agentID     string
 	prompt      string
@@ -39,7 +38,6 @@ type Claude struct {
 // New returns a Claude agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
 	return &Claude{
-		workspace:   ctx.Workspace,
 		roleDir:     ctx.RoleDir,
 		agentID:     ctx.AgentID,
 		prompt:      ctx.Prompt,
@@ -75,8 +73,9 @@ func (c *Claude) writePrompt() error {
 }
 
 func (c *Claude) writeSettings() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("claude: create settings dir: %w", err)
+	dotClaude := filepath.Join(c.roleDir, ".claude")
+	if err := os.MkdirAll(dotClaude, 0o755); err != nil {
+		return fmt.Errorf("claude: create .claude dir: %w", err)
 	}
 
 	hookEvents := map[string]any{}
@@ -99,7 +98,7 @@ func (c *Claude) writeSettings() error {
 	}
 	settings := map[string]any{"hooks": hookEvents}
 
-	settingsPath := filepath.Join(c.roleDir, "settings.json")
+	settingsPath := filepath.Join(dotClaude, "settings.json")
 	f, err := os.Create(settingsPath)
 	if err != nil {
 		return fmt.Errorf("claude: create settings.json: %w", err)
@@ -138,13 +137,15 @@ func (c *Claude) Cmd() *exec.Cmd {
 		}
 	}
 
+	// Pre-authorize the role directory so Claude Code skips the trust dialog.
+	args = append(args, "--add-dir", c.roleDir)
+
 	binary := c.cfg.Binary
 	if binary == "" {
 		binary = claudeBinary
 	}
 	cmd := exec.Command(binary, args...)
-	cmd.Dir = c.workspace
-	cmd.Env = append(cmd.Env, "CLAUDE_CONFIG_DIR="+c.roleDir)
+	cmd.Dir = c.roleDir
 	for k, v := range merge(c.cfg.Envs, defaultEnvs) {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
