@@ -159,6 +159,7 @@ type Role struct {
 type AgentConfig struct {
     Name   string            `yaml:"name,omitempty"`
     Type   string            `yaml:"type"`
+    Binary string            `yaml:"binary,omitempty"`
     Model  string            `yaml:"model"`
     Params map[string]any    `yaml:"params"`
     Envs   map[string]string `yaml:"envs"`
@@ -205,9 +206,8 @@ mecha run
 
 ```
 <workspace>/.mecha/roles/<role-name>/
-├── CLAUDE.md                          # role prompt + workspace (coordinator 额外含 available_roles)
-└── .claude/
-    └── settings.json                  # hooks (SessionStart, Stop, StopFailure)
+├── CLAUDE.md                          # 用户级 CLAUDE.md（role prompt），通过 CLAUDE_CONFIG_DIR 加载
+└── settings.json                      # 用户级 settings（hooks），通过 CLAUDE_CONFIG_DIR 加载
 ```
 
 ### 4.3 settings.json
@@ -479,6 +479,13 @@ var eventMap = map[string]string{
 ### 6.4 Agent 接口
 
 ```go
+type AgentContext struct {
+    Workspace string  // 项目根目录 (cmd.Dir)
+    RoleDir   string  // CLAUDE_CONFIG_DIR 指向的目录
+    Prompt    string  // role prompt，写入 CLAUDE.md
+    AgentID   string  // agent 唯一标识 UUID
+}
+
 type Agent interface {
     Prepare() error
     Cmd() *exec.Cmd
@@ -486,8 +493,7 @@ type Agent interface {
     ID() string
 }
 
-type Factory func(roleDir, agentID, prompt string,
-    cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
+type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
 ```
 
 不同 agent 类型通过 `registry` map 注册（`agent.go init()` 注册 `"claude"` → `claude.New`），各自实现 `ParseHookEvent`。
@@ -496,16 +502,16 @@ type Factory func(roleDir, agentID, prompt string,
 
 **Prepare() 步骤：**
 1. 创建 `<roleDir>/` 目录
-2. 写入 `CLAUDE.md`（rendered prompt）
-3. 创建 `<roleDir>/.claude/` 目录
-4. 写入 `settings.json`（hooks 配置）
+2. 写入 `CLAUDE.md`（rendered prompt，作为用户级 CLAUDE.md 被加载）
+3. 写入 `settings.json`（hooks 配置，作为用户级 settings 被加载）
 
 **Cmd() 构建逻辑：**
 - `--model <model>`
 - 合并 user params 和 `defaultParams`（`dangerously-skip-permissions: true`），按字母序输出
-- `--add-dir <roleDir>` 跳过信任对话框
-- 工作目录 = `<roleDir>`
+- 设置环境变量 `CLAUDE_CONFIG_DIR=<roleDir>` 实现 agent 配置隔离
+- 工作目录 = `<workspace>`（项目根目录）
 - 合并 user envs 和 `defaultEnvs`（`BASH_DEFAULT_TIMEOUT_MS: 1200000`）
+- 如果 `AgentConfig.Binary` 非空则使用指定 binary，否则默认 `claude`
 
 ---
 
@@ -614,7 +620,7 @@ docs/
 | pane 分割策略 | 首次垂直（右侧），后续水平（下方） |
 | 后端优先级 | tmux > iTerm2 > Ghostty |
 | send 行终止符 | `\r\n`（CR+LF），确保终端正确显示和命令执行 |
-| Prepare trust dialog | 使用 `--add-dir <roleDir>` 跳过首次信任对话框 |
+| Prepare trust dialog | 通过 `CLAUDE_CONFIG_DIR` 和 `dangerously-skip-permissions` 跳过，无需 `--add-dir` |
 | Coordinator 特殊化 | 启动方式不同（子进程 vs pane），未统一模型 |
 | 任务超时 | 30 分钟，超时 Kill Specialist + 返回错误 |
 | agent 启动超时 | 30 秒等待 SessionStart |
