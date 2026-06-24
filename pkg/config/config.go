@@ -63,6 +63,7 @@ func DefaultConfigPath() (string, error) {
 type AgentConfig struct {
 	Name   string            `yaml:"name,omitempty"`
 	Type   string            `yaml:"type"`
+	Binary string            `yaml:"binary,omitempty"`
 	Model  string            `yaml:"model"`
 	Params map[string]any    `yaml:"params"`
 	Envs   map[string]string `yaml:"envs"`

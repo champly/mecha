@@ -89,12 +89,18 @@ func (c *Core) handleAsk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) onEvent(agentID string, event types.HookEvent) {
-	c.logger.Info("hook event", "event", event.Event, "agent", agentID, "session", event.SessionID)
-
 	inst := c.instanceByAgentID[agentID]
 	if inst == nil {
 		return
 	}
+
+	c.logger.Info(
+		"hook event",
+		"event", event.Event,
+		"role", inst.role,
+		"agent", agentID,
+		"session", event.SessionID,
+	)
 
 	switch event.Event {
 	case types.EventSessionStart:

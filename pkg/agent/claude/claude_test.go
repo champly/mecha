@@ -3,6 +3,7 @@ package claude
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,14 +23,38 @@ func testRuntime() config.Runtime {
 	return config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
 }
 
-func testNew(dir, agentID, prompt string) *Claude {
-	a, _ := New(dir, agentID, prompt, testAgentConfig(), testRuntime())
+func testNew(workspace, roleDir, agentID, prompt string) *Claude {
+	ctx := agenttypes.AgentContext{
+		Workspace: workspace,
+		RoleDir:   roleDir,
+		Prompt:    prompt,
+		AgentID:   agentID,
+	}
+	a, _ := New(ctx, testAgentConfig(), testRuntime())
 	return a.(*Claude)
+}
+
+func TestNew(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "test prompt")
+
+	if c.workspace != "/ws" {
+		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
+	}
+	if c.roleDir != "/ws/.mecha/roles/lead" {
+		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
+	}
+	if c.agentID != "agent-001" {
+		t.Errorf("agentID = %q, want %q", c.agentID, "agent-001")
+	}
+	if c.prompt != "test prompt" {
+		t.Errorf("prompt = %q, want %q", c.prompt, "test prompt")
+	}
 }
 
 func TestWritePrompt(t *testing.T) {
 	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
-	c := testNew(t.TempDir(), "agent-001", content)
+	dir := t.TempDir()
+	c := testNew(dir, filepath.Join(dir, "role"), "agent-001", content)
 
 	if err := c.writePrompt(); err != nil {
 		t.Fatalf("writePrompt() error: %v", err)
@@ -45,13 +70,14 @@ func TestWritePrompt(t *testing.T) {
 }
 
 func TestWriteSettings(t *testing.T) {
-	c := testNew(t.TempDir(), "agent-123", "prompt")
+	dir := t.TempDir()
+	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", "prompt")
 
 	if err := c.writeSettings(); err != nil {
 		t.Fatalf("writeSettings() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(c.roleDir, ".claude", "settings.json"))
+	data, err := os.ReadFile(filepath.Join(c.roleDir, "settings.json"))
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
 	}
@@ -71,7 +97,8 @@ func TestWriteSettings(t *testing.T) {
 
 func TestPrepare(t *testing.T) {
 	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
-	c := testNew(t.TempDir(), "agent-123", prompt)
+	dir := t.TempDir()
+	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", prompt)
 
 	if err := c.Prepare(); err != nil {
 		t.Fatalf("Prepare() error: %v", err)
@@ -80,7 +107,28 @@ func TestPrepare(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(c.roleDir, "CLAUDE.md")); err != nil {
 		t.Errorf("CLAUDE.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(c.roleDir, ".claude", "settings.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(c.roleDir, "settings.json")); err != nil {
 		t.Errorf("settings.json not created: %v", err)
+	}
+}
+
+func TestCmd(t *testing.T) {
+	dir := t.TempDir()
+	c := testNew(dir, filepath.Join(dir, "role"), "agent-001", "prompt")
+
+	cmd := c.Cmd()
+
+	if cmd.Dir != c.workspace {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.workspace)
+	}
+
+	foundConfigDir := slices.Contains(cmd.Env, "CLAUDE_CONFIG_DIR="+c.roleDir)
+	if !foundConfigDir {
+		t.Errorf("CLAUDE_CONFIG_DIR not found in cmd.Env, got: %v", cmd.Env)
+	}
+
+	foundAddDir := slices.Contains(cmd.Args, "--add-dir")
+	if foundAddDir {
+		t.Errorf("--add-dir should not be present in args: %v", cmd.Args)
 	}
 }

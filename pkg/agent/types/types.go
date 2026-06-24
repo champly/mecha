@@ -7,8 +7,20 @@ import (
 	"github.com/champly/mecha/pkg/config"
 )
 
+// AgentContext bundles the runtime environment for an agent instance:
+//   - Workspace is the project root (cmd.Dir).
+//   - RoleDir is the CLAUDE_CONFIG_DIR target (settings, sessions, memory).
+//   - Prompt is the role-specific instruction (written to CLAUDE.md).
+//   - AgentID is the unique identifier for this agent instance.
+type AgentContext struct {
+	Workspace string
+	RoleDir   string
+	Prompt    string
+	AgentID   string
+}
+
 // Factory creates an Agent from the given parameters.
-type Factory func(roleDir, agentID, prompt string, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
+type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
 
 // Agent is the interface all agent types must implement.
 type Agent interface {

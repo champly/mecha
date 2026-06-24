@@ -8,7 +8,7 @@ import (
 
 func TestParseHookEvent_Stop(t *testing.T) {
 	raw := []byte(`{"session_id":"d54db35e","hook_event_name":"Stop","last_assistant_message":"hello world"}`)
-	c := testNew("/tmp", "agent-001", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -33,7 +33,7 @@ func TestParseHookEvent_Stop(t *testing.T) {
 
 func TestParseHookEvent_SessionStart(t *testing.T) {
 	raw := []byte(`{"session_id":"abc123","hook_event_name":"SessionStart"}`)
-	c := testNew("/tmp", "agent-002", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-002", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 
 func TestParseHookEvent_StopFailure(t *testing.T) {
 	raw := []byte(`{"session_id":"fail1","hook_event_name":"StopFailure","error_type":"rate_limit"}`)
-	c := testNew("/tmp", "agent-003", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-003", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 
 func TestParseHookEvent_PostToolBatch(t *testing.T) {
 	raw := []byte(`{"session_id":"xyz","hook_event_name":"PostToolBatch"}`)
-	c := testNew("/tmp", "agent-004", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-004", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
