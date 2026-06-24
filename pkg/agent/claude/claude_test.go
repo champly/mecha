@@ -37,6 +37,9 @@ func testNew(workspace, roleDir, agentID, prompt string) *Claude {
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "test prompt")
 
+	if c.workspace != "/ws" {
+		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
+	}
 	if c.roleDir != "/ws/.mecha/roles/lead" {
 		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
 	}
@@ -57,7 +60,7 @@ func TestWritePrompt(t *testing.T) {
 		t.Fatalf("writePrompt() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(c.roleDir, "CLAUDE.md"))
+	data, err := os.ReadFile(c.claudeMdPath())
 	if err != nil {
 		t.Fatalf("read CLAUDE.md: %v", err)
 	}
@@ -74,7 +77,7 @@ func TestWriteSettings(t *testing.T) {
 		t.Fatalf("writeSettings() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(c.roleDir, ".claude", "settings.json"))
+	data, err := os.ReadFile(c.settingsPath())
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
 	}
@@ -101,10 +104,10 @@ func TestPrepare(t *testing.T) {
 		t.Fatalf("Prepare() error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(c.roleDir, "CLAUDE.md")); err != nil {
+	if _, err := os.Stat(c.claudeMdPath()); err != nil {
 		t.Errorf("CLAUDE.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(c.roleDir, ".claude", "settings.json")); err != nil {
+	if _, err := os.Stat(c.settingsPath()); err != nil {
 		t.Errorf("settings.json not created: %v", err)
 	}
 }
@@ -116,12 +119,15 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.roleDir {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.roleDir)
+	if cmd.Dir != c.workspace {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.workspace)
 	}
 
-	if !slices.Contains(cmd.Args, "--add-dir") {
-		t.Errorf("--add-dir should be present in args: %v", cmd.Args)
+	if !slices.Contains(cmd.Args, "--settings") {
+		t.Errorf("--settings should be present in args: %v", cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, "--append-system-prompt-file") {
+		t.Errorf("--append-system-prompt-file should be present in args: %v", cmd.Args)
 	}
 
 	for _, env := range cmd.Env {

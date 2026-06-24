@@ -8,9 +8,9 @@ import (
 )
 
 // AgentContext bundles the runtime environment for an agent instance:
-//   - Workspace is the project root.
-//   - RoleDir is the directory for agent-specific files (CLAUDE.md, .claude/settings.json).
-//   - Prompt is the role-specific instruction (written to CLAUDE.md).
+//   - Workspace is the project root (cmd.Dir).
+//   - RoleDir is the directory for agent-specific files (CLAUDE.md, settings.json).
+//   - Prompt is the role-specific instruction (injected via --append-system-prompt-file).
 //   - AgentID is the unique identifier for this agent instance.
 type AgentContext struct {
 	Workspace string

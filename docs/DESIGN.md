@@ -206,9 +206,8 @@ mecha run
 
 ```
 <workspace>/.mecha/roles/<role-name>/
-├── CLAUDE.md                          # role prompt，agent 启动目录为 roleDir 自动加载
-└── .claude/
-    └── settings.json                  # hook 配置，agent 启动目录为 roleDir 自动加载
+├── CLAUDE.md                          # role prompt，通过 --append-system-prompt-file 注入
+└── settings.json                      # hook 配置，通过 --settings 合并到全局配置
 ```
 
 ### 4.3 settings.json
@@ -481,9 +480,9 @@ var eventMap = map[string]string{
 
 ```go
 type AgentContext struct {
-    Workspace string  // 项目根目录
-    RoleDir   string  // agent 专属文件目录（CLAUDE.md、.claude/settings.json）
-    Prompt    string  // role prompt，写入 CLAUDE.md
+    Workspace string  // 项目根目录 (cmd.Dir)
+    RoleDir   string  // agent 专属文件目录（CLAUDE.md、settings.json）
+    Prompt    string  // role prompt，通过 --append-system-prompt-file 注入
     AgentID   string  // agent 唯一标识 UUID
 }
 
@@ -503,21 +502,23 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 
 **Prepare() 步骤：**
 1. 创建 `<roleDir>/` 目录
-2. 写入 `CLAUDE.md`（rendered prompt，agent 启动目录为 roleDir 自动加载）
-3. 创建 `<roleDir>/.claude/` 目录，写入 `settings.json`（hooks 配置）
+2. 写入 `CLAUDE.md`（rendered prompt）
+3. 写入 `settings.json`（hooks 配置）
 
 **Cmd() 构建逻辑：**
 - `--model <model>`
-- `--add-dir <roleDir>` 跳过 trust dialog
+- `--settings <roleDir>/settings.json` 合并 hook 配置到全局 settings
+- `--append-system-prompt-file <roleDir>/CLAUDE.md` 将 role prompt 追加到 system prompt
 - 合并 user params 和 `defaultParams`（`dangerously-skip-permissions: true`），按字母序输出
-- 工作目录 = `<roleDir>`（agent 启动后自动发现 CLAUDE.md 和 .claude/settings.json）
+- 工作目录 = `<workspace>`（项目根目录，agent 无需额外告知工作路径）
 - 合并 user envs 和 `defaultEnvs`（`BASH_DEFAULT_TIMEOUT_MS: 1200000`）
 - 如果 `AgentConfig.Binary` 非空则使用指定 binary，否则默认 `claude`
 
 **配置隔离策略：**
-- 每个 agent 在独立的 roleDir 下启动，Claude Code 以 roleDir 为工作目录
-- roleDir 下的 `CLAUDE.md` 和 `.claude/settings.json` 被自动发现，与用户全局 `~/.claude/` 配置叠加
-- 全局 MCP servers、credentials 等配置保持不变，所有 agent 共享
+- `--settings` 将 agent hook 配置**叠加合并**到用户全局 `~/.claude/settings.json`，未指定的 key 保留原值
+- `--append-system-prompt-file` 将 role prompt 追加到 system prompt 末尾
+- 不设置 `CLAUDE_CONFIG_DIR`，全局 `~/.claude/`（MCP servers、credentials 等）完整保留
+- agent 工作目录为 workspace，项目的 `CLAUDE.md` 和 `.claude/` 配置正常加载
 
 ---
 
@@ -626,7 +627,7 @@ docs/
 | pane 分割策略 | 首次垂直（右侧），后续水平（下方） |
 | 后端优先级 | tmux > iTerm2 > Ghostty |
 | send 行终止符 | `\r\n`（CR+LF），确保终端正确显示和命令执行 |
-| Prepare trust dialog | 通过 `--add-dir <roleDir>` 和 `dangerously-skip-permissions` 跳过 |
+| Prepare trust dialog | 通过 `dangerously-skip-permissions` 跳过，无需 `--add-dir`（agent 在 workspace 工作，roleDir 仅通过 `--settings` / `--append-system-prompt-file` 读取配置） |
 | Coordinator 特殊化 | 启动方式不同（子进程 vs pane），未统一模型 |
 | 任务超时 | 30 分钟，超时 Kill Specialist + 返回错误 |
 | agent 启动超时 | 30 秒等待 SessionStart |
