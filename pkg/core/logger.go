@@ -1,11 +1,11 @@
 package core
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/champly/mecha/pkg/config"
@@ -17,8 +17,9 @@ func initLogger(workspace string) (*slog.Logger, *os.File, error) {
 		return nil, nil, err
 	}
 
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace)))[:8]
-	logDir := filepath.Join(dir, "logs", hash)
+	name := strings.TrimLeft(workspace, "/")
+	name = strings.ReplaceAll(name, "/", "_")
+	logDir := filepath.Join(dir, "logs", name)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("core: create log dir %q: %w", logDir, err)
 	}

@@ -188,7 +188,7 @@ mecha run
   │
   ├── core.New(workspace, cfg)
   │   ├── term.New()                  # 自动检测终端 (tmux > iTerm2 > Ghostty)
-  │   └── initLogger()                # ~/.mecha/logs/<hash>/YYYY-MM-DD.log
+  │   └── initLogger()                # ~/.mecha/logs/<路径下划线分隔>/YYYY-MM-DD.log
   │
   └── c.Start(ctx)
       ├── 1. 找 coordinator role
@@ -605,10 +605,10 @@ docs/
 ## 8. 日志
 
 ```
-~/.mecha/logs/<workspace-hash>/YYYY-MM-DD.log
+~/.mecha/logs/<workspace-path>/YYYY-MM-DD.log
 ```
 
-- `workspace-hash` = workspace 绝对路径的 SHA256 前 8 位 hex 字符，多 workspace 自动隔离
+- `workspace-path` = workspace 绝对路径去头 `/`、`/` 替换为 `_`（例如 `/Users/me/project` → `Users_me_project`），多 workspace 自动隔离
 - `slog.TextHandler`，输出 `key=value` 格式，带文件名和行号
 - 按天追加
 
