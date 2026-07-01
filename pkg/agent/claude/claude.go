@@ -4,11 +4,9 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -129,24 +127,9 @@ func (c *Claude) Cmd() *exec.Cmd {
 		args = append(args, "--model", c.cfg.Model)
 	}
 
-	params := merge(c.cfg.Params, defaultParams)
-
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		v := params[k]
-		if b, ok := v.(bool); ok && b {
-			args = append(args, "--"+k)
-		} else {
-			args = append(args, "--"+k, fmt.Sprint(v))
-		}
-	}
-
-	args = append(args,
+	args = append(args, agenttypes.BuildArgs(c.cfg.Params, defaultParams)...)
+	args = append(
+		args,
 		"--settings", c.settingsPath(),
 		"--append-system-prompt-file", c.claudeMdPath(),
 	)
@@ -157,18 +140,8 @@ func (c *Claude) Cmd() *exec.Cmd {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = c.workspace
-	for k, v := range merge(c.cfg.Envs, defaultEnvs) {
+	for k, v := range agenttypes.MergeMap(c.cfg.Envs, defaultEnvs) {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	return cmd
-}
-
-func merge[M ~map[K]V, K comparable, V any](user, defaults M) M {
-	if len(defaults) == 0 {
-		return maps.Clone(user)
-	}
-
-	r := maps.Clone(defaults)
-	maps.Copy(r, user)
-	return r
 }

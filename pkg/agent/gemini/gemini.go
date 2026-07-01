@@ -4,11 +4,9 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -16,11 +14,9 @@ import (
 
 const geminiBinary = "gemini"
 
-var (
-	defaultParams = map[string]any{
-		"yolo": true,
-	}
-)
+var defaultParams = map[string]any{
+	"yolo": true,
+}
 
 // Gemini handles the Gemini CLI agent type for a specific role.
 type Gemini struct {
@@ -140,23 +136,7 @@ func (g *Gemini) Cmd() *exec.Cmd {
 	if g.cfg.Model != "" {
 		args = append(args, "--model", g.cfg.Model)
 	}
-
-	params := merge(g.cfg.Params, defaultParams)
-
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		v := params[k]
-		if b, ok := v.(bool); ok && b {
-			args = append(args, "--"+k)
-		} else {
-			args = append(args, "--"+k, fmt.Sprint(v))
-		}
-	}
+	args = append(args, agenttypes.BuildArgs(g.cfg.Params, defaultParams)...)
 
 	binary := g.cfg.Binary
 	if binary == "" {
@@ -168,14 +148,4 @@ func (g *Gemini) Cmd() *exec.Cmd {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	return cmd
-}
-
-func merge[M ~map[K]V, K comparable, V any](user, defaults M) M {
-	if len(defaults) == 0 {
-		return maps.Clone(user)
-	}
-
-	r := maps.Clone(defaults)
-	maps.Copy(r, user)
-	return r
 }

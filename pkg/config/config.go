@@ -217,6 +217,7 @@ func (c *Config) complete() {
 	for i := range c.Agents {
 		c.Agents[i].Name = strings.TrimSpace(c.Agents[i].Name)
 		c.Agents[i].Type = strings.TrimSpace(c.Agents[i].Type)
+		c.Agents[i].Binary = strings.TrimSpace(c.Agents[i].Binary)
 		c.Agents[i].Model = strings.TrimSpace(c.Agents[i].Model)
 		c.Agents[i].Params = cloneParams(c.Agents[i].Params)
 	}
@@ -240,6 +241,7 @@ func (c *Config) complete() {
 			resolved := AgentConfig{
 				Name:   agentName,
 				Type:   base.Type,
+				Binary: base.Binary,
 				Model:  base.Model,
 				Params: cloneParams(base.Params),
 				Envs:   maps.Clone(base.Envs),
@@ -247,6 +249,9 @@ func (c *Config) complete() {
 
 			if v := strings.TrimSpace(role.Agent.Type); v != "" {
 				resolved.Type = v
+			}
+			if v := strings.TrimSpace(role.Agent.Binary); v != "" {
+				resolved.Binary = v
 			}
 			if v := strings.TrimSpace(role.Agent.Model); v != "" {
 				resolved.Model = v
@@ -284,7 +289,7 @@ func InitConfig(force bool) (path string, err error) {
 		return "", err
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("config: cannot create directory %q: %w", dir, err)
 	}
 
@@ -293,7 +298,7 @@ func InitConfig(force bool) (path string, err error) {
 	if _, statErr := os.Stat(path); statErr == nil {
 		if force {
 			// Overwrite directly
-			if err := os.WriteFile(path, defaultConfigYAML, 0644); err != nil {
+			if err := os.WriteFile(path, defaultConfigYAML, 0o644); err != nil {
 				return "", fmt.Errorf("config: cannot write %q: %w", path, err)
 			}
 			return path, nil
@@ -307,7 +312,7 @@ func InitConfig(force bool) (path string, err error) {
 		}
 	}
 
-	if err := os.WriteFile(path, defaultConfigYAML, 0644); err != nil {
+	if err := os.WriteFile(path, defaultConfigYAML, 0o644); err != nil {
 		return "", fmt.Errorf("config: cannot write %q: %w", path, err)
 	}
 

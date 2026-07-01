@@ -3,11 +3,9 @@ package codex
 
 import (
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"text/template"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
@@ -16,11 +14,9 @@ import (
 
 const codexBinary = "codex"
 
-var (
-	defaultParams = map[string]any{
-		"dangerously-bypass-approvals-and-sandbox": true,
-	}
-)
+var defaultParams = map[string]any{
+	"dangerously-bypass-approvals-and-sandbox": true,
+}
 
 // Codex handles the Codex CLI agent type for a specific role.
 type Codex struct {
@@ -133,23 +129,7 @@ func (c *Codex) Cmd() *exec.Cmd {
 		args = append(args, "--model", c.cfg.Model)
 	}
 
-	params := merge(c.cfg.Params, defaultParams)
-
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		v := params[k]
-		if b, ok := v.(bool); ok && b {
-			args = append(args, "--"+k)
-		} else {
-			args = append(args, "--"+k, fmt.Sprint(v))
-		}
-	}
-
+	args = append(args, agenttypes.BuildArgs(c.cfg.Params, defaultParams)...)
 	args = append(args, "--cd", c.roleDir)
 
 	binary := c.cfg.Binary
@@ -162,14 +142,4 @@ func (c *Codex) Cmd() *exec.Cmd {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	return cmd
-}
-
-func merge[M ~map[K]V, K comparable, V any](user, defaults M) M {
-	if len(defaults) == 0 {
-		return maps.Clone(user)
-	}
-
-	r := maps.Clone(defaults)
-	maps.Copy(r, user)
-	return r
 }

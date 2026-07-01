@@ -12,12 +12,12 @@ func TestSplitPaneRequest(t *testing.T) {
 	req := &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SplitPaneRequest{
 			SplitPaneRequest: &api.SplitPaneRequest{
-				Session:        proto.String("abc"),
+				Session:        new("abc"),
 				SplitDirection: &dir,
 			},
 		},
 	}
-	req.Id = proto.Int64(1)
+	req.Id = new(int64(1))
 	data, err := proto.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -31,12 +31,12 @@ func TestSendTextRequest(t *testing.T) {
 	req := &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SendTextRequest{
 			SendTextRequest: &api.SendTextRequest{
-				Session: proto.String("session-1"),
-				Text:    proto.String("hello\n"),
+				Session: new("session-1"),
+				Text:    new("hello\n"),
 			},
 		},
 	}
-	req.Id = proto.Int64(2)
+	req.Id = new(int64(2))
 	data, err := proto.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -48,11 +48,11 @@ func TestGetBufferRequest(t *testing.T) {
 	req := &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_GetBufferRequest{
 			GetBufferRequest: &api.GetBufferRequest{
-				Session: proto.String("session-1"),
+				Session: new("session-1"),
 			},
 		},
 	}
-	req.Id = proto.Int64(3)
+	req.Id = new(int64(3))
 	data, err := proto.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestCloseRequest(t *testing.T) {
 			},
 		},
 	}
-	req.Id = proto.Int64(4)
+	req.Id = new(int64(4))
 	data, err := proto.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -85,12 +85,12 @@ func TestRoundTripSplitPane(t *testing.T) {
 	req := &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SplitPaneRequest{
 			SplitPaneRequest: &api.SplitPaneRequest{
-				Session:        proto.String("active"),
+				Session:        new("active"),
 				SplitDirection: &dir,
 			},
 		},
 	}
-	req.Id = proto.Int64(5)
+	req.Id = new(int64(5))
 
 	data, err := proto.Marshal(req)
 	if err != nil {
@@ -120,13 +120,13 @@ func TestRoundTripSplitPane(t *testing.T) {
 func TestRoundTripGetBufferResponse(t *testing.T) {
 	// Build a GetBufferResponse with content
 	resp := &api.ServerOriginatedMessage{
-		Id: proto.Int64(7),
+		Id: new(int64(7)),
 		Submessage: &api.ServerOriginatedMessage_GetBufferResponse{
 			GetBufferResponse: &api.GetBufferResponse{
-				Status: api.GetBufferResponse_OK.Enum(),
+				Status: new(api.GetBufferResponse_OK),
 				Contents: []*api.LineContents{
-					{Text: proto.String("hello\n")},
-					{Text: proto.String("world\n")},
+					{Text: new("hello\n")},
+					{Text: new("world\n")},
 				},
 			},
 		},

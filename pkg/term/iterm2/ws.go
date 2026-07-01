@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/champly/mecha/pkg/term/iterm2/api"
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/champly/mecha/pkg/term/iterm2/api"
 )
 
 func socketPath() string {
@@ -22,7 +23,8 @@ func socketPath() string {
 }
 
 func requestCookie() (cookie, key string, err error) {
-	out, err := exec.Command("osascript", "-e",
+	out, err := exec.Command(
+		"osascript", "-e",
 		`tell application "iTerm2" to request cookie and key for app named "mecha"`,
 	).Output()
 	if err != nil {
@@ -72,7 +74,7 @@ func (c *conn) close() error {
 
 func (c *conn) call(req *api.ClientOriginatedMessage) (*api.ServerOriginatedMessage, error) {
 	c.seq++
-	req.Id = proto.Int64(c.seq)
+	req.Id = &c.seq
 
 	body, err := proto.Marshal(req)
 	if err != nil {
@@ -116,7 +118,7 @@ func (c *conn) splitSession(sessionID string, vertical bool) (string, error) {
 	resp, err := c.call(&api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SplitPaneRequest{
 			SplitPaneRequest: &api.SplitPaneRequest{
-				Session:        proto.String(sessionID),
+				Session:        &sessionID,
 				SplitDirection: &dir,
 			},
 		},
@@ -135,8 +137,8 @@ func (c *conn) sendText(sessionID, text string) error {
 	_, err := c.call(&api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SendTextRequest{
 			SendTextRequest: &api.SendTextRequest{
-				Session: proto.String(sessionID),
-				Text:    proto.String(text),
+				Session: &sessionID,
+				Text:    &text,
 			},
 		},
 	})
@@ -147,14 +149,13 @@ func (c *conn) getBuffer(sessionID string, all bool) (string, error) {
 	req := &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_GetBufferRequest{
 			GetBufferRequest: &api.GetBufferRequest{
-				Session: proto.String(sessionID),
+				Session: &sessionID,
 			},
 		},
 	}
 	if all {
 		// Request entire scrollback buffer.
-		n := int32(-1)
-		req.GetGetBufferRequest().LineRange = &api.LineRange{TrailingLines: &n}
+		req.GetGetBufferRequest().LineRange = &api.LineRange{TrailingLines: new(int32(-1))}
 	}
 	resp, err := c.call(req)
 	if err != nil {
