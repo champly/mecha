@@ -8,6 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -15,18 +19,18 @@ import (
 )
 
 const (
-	StatusStarting = "starting"
-	StatusRunning  = "running"
-	StatusBusy     = "busy"
+	statusStarting int32 = iota + 1
+	statusRunning
+	statusBusy
 )
 
 type instance struct {
 	role   string
 	agent  types.Agent
 	handle term.Handle
-	status string          // starting | running | busy
+	status atomic.Int32
 	ready  chan struct{}   // closed when SessionStart arrives
-	result chan taskResult // per-task completion signal
+	result atomic.Pointer[chan taskResult] // per-task completion signal
 }
 
 type taskResult struct {
@@ -46,6 +50,12 @@ type Core struct {
 	agentByID         map[string]types.Agent
 	instanceByAgentID map[string]*instance
 
+	// mu guards concurrent access to the following fields:
+	// specialists, agentByID, instanceByAgentID, and instance.status/result.
+	mu sync.Mutex
+
+	shutdownGracePeriod time.Duration
+
 	logger  *slog.Logger
 	logFile *os.File
 }
@@ -62,15 +72,25 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		return nil, fmt.Errorf("core: init logger: %w", err)
 	}
 
+	gracePeriod := 30 * time.Second
+	if cfg.ShutdownGracePeriod != "" {
+		if d, err := time.ParseDuration(strings.TrimSpace(cfg.ShutdownGracePeriod)); err == nil {
+			gracePeriod = d
+		} else {
+			slog.Warn("core: invalid shutdown_grace_period, using default 30s", "value", cfg.ShutdownGracePeriod, "err", err)
+		}
+	}
+
 	return &Core{
-		workspace:         workspace,
-		cfg:               cfg,
-		backend:           backend,
-		specialists:       make(map[string]*instance),
-		agentByID:         make(map[string]types.Agent),
-		instanceByAgentID: make(map[string]*instance),
-		logger:            logger,
-		logFile:           logFile,
+		workspace:           workspace,
+		cfg:                 cfg,
+		backend:             backend,
+		specialists:         make(map[string]*instance),
+		agentByID:           make(map[string]types.Agent),
+		instanceByAgentID:   make(map[string]*instance),
+		shutdownGracePeriod: gracePeriod,
+		logger:              logger,
+		logFile:             logFile,
 	}, nil
 }
 

@@ -34,7 +34,9 @@ func (c *Core) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	c.mu.Lock()
 	a, ok := c.agentByID[agentID]
+	c.mu.Unlock()
 	if !ok {
 		http.Error(w, "unknown agent: "+agentID, http.StatusNotFound)
 		return
@@ -89,7 +91,9 @@ func (c *Core) handleAsk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) onEvent(agentID string, event types.HookEvent) {
+	c.mu.Lock()
 	inst := c.instanceByAgentID[agentID]
+	c.mu.Unlock()
 	if inst == nil {
 		return
 	}
@@ -104,18 +108,28 @@ func (c *Core) onEvent(agentID string, event types.HookEvent) {
 
 	switch event.Event {
 	case types.EventSessionStart:
-		if inst.status == StatusStarting {
+		if inst.status.Load() == statusStarting {
 			close(inst.ready)
 		}
 
 	case types.EventStop:
-		if inst.status == StatusBusy && inst.result != nil {
-			inst.result <- taskResult{output: event.Output}
+		if inst.status.Load() == statusBusy {
+			if p := inst.result.Load(); p != nil {
+				select {
+				case *p <- taskResult{output: event.Output}:
+				default:
+				}
+			}
 		}
 
 	case types.EventStopFailure:
-		if inst.status == StatusBusy && inst.result != nil {
-			inst.result <- taskResult{err: event.Error}
+		if inst.status.Load() == statusBusy {
+			if p := inst.result.Load(); p != nil {
+				select {
+				case *p <- taskResult{err: event.Error}:
+				default:
+				}
+			}
 		}
 	}
 }

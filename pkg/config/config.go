@@ -26,6 +26,10 @@ func RoleDir(workspace, roleName string) string {
 	return filepath.Join(workspace, configDirName, rolesDirName, roleName)
 }
 
+// ValidateAgentType is an optional hook for validating agent type strings.
+// When nil, validation is skipped. The agent package sets this during init().
+var ValidateAgentType func(typ string) bool
+
 // MechaBinary is the default path to the mecha binary, used for webhook
 // callbacks. Override at build time with ldflags:
 //
@@ -87,6 +91,11 @@ type Config struct {
 
 	Profile  string                   `yaml:"profile"`
 	Profiles map[string]ProfileConfig `yaml:"profiles"`
+
+	// ShutdownGracePeriod is the duration to wait for in-flight tasks to
+	// complete after the coordinator exits. Uses Go duration string format (e.g. "30s", "1m").
+	// Zero or empty defaults to 30s. Set to "0s" to disable waiting (immediate kill).
+	ShutdownGracePeriod string `yaml:"shutdown_grace_period,omitempty"`
 }
 
 // LoadConfig reads YAML config from path, validates it, and completes it with defaults.
@@ -145,6 +154,13 @@ func (c Config) validate() error {
 			return fmt.Errorf("config: duplicate agent name %q", name)
 		}
 		agentNames[name] = struct{}{}
+
+		if ValidateAgentType != nil {
+			agentType := strings.TrimSpace(agent.Type)
+			if !ValidateAgentType(agentType) {
+				return fmt.Errorf("config: unknown agent type %q", agentType)
+			}
+		}
 	}
 
 	defaultAgent := strings.TrimSpace(c.Agent)

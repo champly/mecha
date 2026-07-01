@@ -98,15 +98,15 @@ func testCore(t *testing.T) (*Core, *mockBackend) {
 	return c, backend
 }
 
-func addAgent(c *Core, agentID, status string) *instance {
+func addAgent(c *Core, agentID string, status int32) *instance {
 	a := &mockAgent{id: agentID}
 	inst := &instance{
 		role:   "test-role",
 		agent:  a,
 		handle: mockHandle{id: agentID + "-handle"},
-		status: status,
 	}
-	if status == StatusStarting {
+	inst.status.Store(status)
+	if status == statusStarting {
 		inst.ready = make(chan struct{})
 	}
 	c.agentByID[agentID] = a
@@ -121,7 +121,7 @@ func addAgent(c *Core, agentID, status string) *instance {
 
 func TestOnEvent_SessionStart_Starting(t *testing.T) {
 	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusStarting)
+	inst := addAgent(c, "agent-1", statusStarting)
 
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventSessionStart})
 
@@ -134,23 +134,23 @@ func TestOnEvent_SessionStart_Starting(t *testing.T) {
 
 func TestOnEvent_SessionStart_Running(t *testing.T) {
 	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusRunning)
+	inst := addAgent(c, "agent-1", statusRunning)
 
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventSessionStart})
 
-	if inst.status != StatusRunning {
-		t.Errorf("status should stay running, got %q", inst.status)
+	if inst.status.Load() != statusRunning {
+		t.Errorf("status should stay running")
 	}
 }
 
 func TestOnEvent_SessionStart_Busy(t *testing.T) {
 	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusBusy)
+	inst := addAgent(c, "agent-1", statusBusy)
 
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventSessionStart})
 
-	if inst.status != StatusBusy {
-		t.Errorf("status should stay busy, got %q", inst.status)
+	if inst.status.Load() != statusBusy {
+		t.Errorf("status should stay busy")
 	}
 }
 
@@ -160,13 +160,14 @@ func TestOnEvent_SessionStart_Busy(t *testing.T) {
 
 func TestOnEvent_Stop_Busy(t *testing.T) {
 	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusBusy)
-	inst.result = make(chan taskResult, 1)
+	inst := addAgent(c, "agent-1", statusBusy)
+	ch := make(chan taskResult, 1)
+	inst.result.Store(&ch)
 
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventStop, Output: "task done"})
 
 	select {
-	case r := <-inst.result:
+	case r := <-ch:
 		if r.output != "task done" {
 			t.Errorf("output = %q, want %q", r.output, "task done")
 		}
@@ -177,7 +178,7 @@ func TestOnEvent_Stop_Busy(t *testing.T) {
 
 func TestOnEvent_Stop_NotBusy(t *testing.T) {
 	c, _ := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	// should not panic when no result chan
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventStop, Output: "done"})
@@ -189,13 +190,14 @@ func TestOnEvent_Stop_NotBusy(t *testing.T) {
 
 func TestOnEvent_StopFailure_Busy(t *testing.T) {
 	c, _ := testCore(t)
-	inst := addAgent(c, "agent-1", StatusBusy)
-	inst.result = make(chan taskResult, 1)
+	inst := addAgent(c, "agent-1", statusBusy)
+	ch := make(chan taskResult, 1)
+	inst.result.Store(&ch)
 
 	c.onEvent("agent-1", types.HookEvent{Event: types.EventStopFailure, Error: "rate_limit"})
 
 	select {
-	case r := <-inst.result:
+	case r := <-ch:
 		if r.err != "rate_limit" {
 			t.Errorf("error = %q, want %q", r.err, "rate_limit")
 		}
@@ -220,7 +222,7 @@ func TestOnEvent_UnknownAgent(t *testing.T) {
 
 func TestAsk_Success(t *testing.T) {
 	c, backend := testCore(t)
-	inst := addAgent(c, "agent-1", StatusRunning)
+	inst := addAgent(c, "agent-1", statusRunning)
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -234,8 +236,8 @@ func TestAsk_Success(t *testing.T) {
 	if result.output != "task output" {
 		t.Errorf("output = %q, want %q", result.output, "task output")
 	}
-	if inst.status != StatusRunning {
-		t.Errorf("status should be running after completion, got %q", inst.status)
+	if inst.status.Load() != statusRunning {
+		t.Errorf("status should be running after completion")
 	}
 
 	sent := backend.sent["agent-1-handle"]
@@ -246,7 +248,7 @@ func TestAsk_Success(t *testing.T) {
 
 func TestAsk_Failure(t *testing.T) {
 	c, _ := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -264,7 +266,7 @@ func TestAsk_Failure(t *testing.T) {
 
 func TestAsk_EmptyTask(t *testing.T) {
 	c, _ := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	result, err := c.Ask(context.Background(), "test-role", "")
 	if err != nil {
@@ -277,7 +279,7 @@ func TestAsk_EmptyTask(t *testing.T) {
 
 func TestAsk_ContextCanceled(t *testing.T) {
 	c, _ := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -290,7 +292,7 @@ func TestAsk_ContextCanceled(t *testing.T) {
 
 func TestAsk_SendErrorResetsStatus(t *testing.T) {
 	c, backend := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	// Make Send return an error to verify status is reset.
 	backend.sendErr = fmt.Errorf("send failed")
@@ -307,8 +309,8 @@ func TestAsk_SendErrorResetsStatus(t *testing.T) {
 	if inst == nil {
 		t.Fatal("instance should still exist")
 	}
-	if inst.status != StatusRunning {
-		t.Errorf("status should be running after send error, got %q", inst.status)
+	if inst.status.Load() != statusRunning {
+		t.Errorf("status should be running after send error")
 	}
 }
 
@@ -318,14 +320,14 @@ func TestAsk_SendErrorResetsStatus(t *testing.T) {
 
 func TestEnsureSpecialist_Reuse(t *testing.T) {
 	c, backend := testCore(t)
-	addAgent(c, "agent-1", StatusRunning)
+	addAgent(c, "agent-1", statusRunning)
 
 	inst, err := c.ensureSpecialist(context.Background(), "test-role")
 	if err != nil {
 		t.Fatalf("ensureSpecialist: %v", err)
 	}
-	if inst.status != StatusRunning {
-		t.Errorf("status = %q, want running", inst.status)
+	if inst.status.Load() != statusRunning {
+		t.Errorf("status should be running")
 	}
 	// No new spawn
 	if len(backend.spawned) != 0 {
@@ -339,38 +341,70 @@ func TestEnsureSpecialist_Reuse(t *testing.T) {
 
 func TestLaunchCoordinator_Cleanup(t *testing.T) {
 	c, backend := testCore(t)
-	inst := addAgent(c, "agent-1", StatusBusy)
-	inst.result = make(chan taskResult, 1)
 
-	// Simulate what launchCoordinator does after cmd.Wait()
-	for roleName, inst := range c.specialists {
-		if inst.result != nil {
-			inst.result <- taskResult{err: "coordinator exited"}
-		}
-		backend.Kill(context.Background(), inst.handle)
-		delete(c.specialists, roleName)
+	// Add a busy specialist with a pending result channel.
+	busyInst := addAgent(c, "agent-busy", statusBusy)
+	ch := make(chan taskResult, 1)
+	busyInst.result.Store(&ch)
+
+	// Add an idle (running) specialist -- should not receive a shutdown notification.
+	idleRole := "idle-role"
+	idleAgent := &mockAgent{id: "agent-idle"}
+	idleInst := &instance{
+		role:   idleRole,
+		agent:  idleAgent,
+		handle: mockHandle{id: "agent-idle-handle"},
 	}
-	c.instanceByAgentID = make(map[string]*instance)
+	idleInst.status.Store(statusRunning)
+	c.agentByID["agent-idle"] = idleAgent
+	c.instanceByAgentID["agent-idle"] = idleInst
+	c.specialists[idleRole] = idleInst
 
-	// Verify cleanup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Act: run the real cleanup sequence used by launchCoordinator.
+	c.drainSpecialists(ctx, 0) // 0 grace period = sends notification but does not sleep
+	c.forceCleanup(ctx)
+
+	// Assert: both maps are cleared.
 	if len(c.specialists) != 0 {
-		t.Errorf("specialists should be empty, got %d", len(c.specialists))
+		t.Errorf("specialists should be empty after forceCleanup, got %d", len(c.specialists))
 	}
 	if len(c.instanceByAgentID) != 0 {
-		t.Errorf("instanceByAgentID should be empty, got %d", len(c.instanceByAgentID))
-	}
-	if !backend.killed["agent-1-handle"] {
-		t.Error("specialist should be killed")
+		t.Errorf("instanceByAgentID should be empty after forceCleanup, got %d", len(c.instanceByAgentID))
 	}
 
-	// Verify result was sent
+	// Assert: both instances were killed.
+	if !backend.killed["agent-busy-handle"] {
+		t.Error("busy specialist should be killed")
+	}
+	if !backend.killed["agent-idle-handle"] {
+		t.Error("idle specialist should be killed")
+	}
+
+	// Assert: shutdown notification was sent only to the busy specialist.
+	busySent := backend.sent["agent-busy-handle"]
+	if len(busySent) != 1 {
+		t.Fatalf("busy specialist should have 1 shutdown notification, got %d", len(busySent))
+	}
+	expectedMsg := "[SYSTEM] The coordinator has exited. The session will be terminated shortly."
+	if busySent[0] != expectedMsg {
+		t.Errorf("shutdown notification mismatch:\ngot:  %q\nwant: %q", busySent[0], expectedMsg)
+	}
+
+	idleSent := backend.sent["agent-idle-handle"]
+	if len(idleSent) != 0 {
+		t.Errorf("idle specialist should not receive shutdown notification, got %d messages", len(idleSent))
+	}
+
+	// Assert: busy specialist's result channel received the cleanup error.
 	select {
-	case r := <-inst.result:
+	case r := <-ch:
 		if r.err != "coordinator exited" {
-			t.Errorf("error = %q, want %q", r.err, "coordinator exited")
+			t.Errorf("result error = %q, want %q", r.err, "coordinator exited")
 		}
 	default:
 		t.Error("result should be sent on cleanup")
 	}
 }
-

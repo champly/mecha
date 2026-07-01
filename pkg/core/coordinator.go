@@ -40,28 +40,82 @@ func (c *Core) launchCoordinator(ctx context.Context, a types.Agent, srv *http.S
 	signal.Stop(sigCh)
 	close(sigCh)
 
-	// Shut down the HTTP server first so no new /ask requests can arrive
-	// while we tear down specialist instances.
+	// Phase 1: Shut down the HTTP server so no new /ask requests can arrive.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(shutdownCtx)
 
-	// Cleanup: kill all specialist panes and cancel waiting Asks.
+	// Phase 2-3: Notify busy specialists that the coordinator is exiting and wait up
+	// to the configured grace period for in-flight tasks to complete naturally.
+	c.drainSpecialists(ctx, c.shutdownGracePeriod)
+
+	// Phase 4: Force-cleanup all remaining specialist panes and trackers.
+	c.forceCleanup(ctx)
+
+	return waitErr
+}
+
+// drainSpecialists sends a shutdown notification to all busy specialists and
+// waits for the grace period to let in-flight tasks complete naturally.
+// The lock is only held while collecting the busy instance list; I/O and sleep
+// happen outside the lock so other goroutines are not blocked.
+func (c *Core) drainSpecialists(ctx context.Context, gracePeriod time.Duration) {
+	var busyInstances []*instance
+
+	c.mu.Lock()
+	for _, inst := range c.specialists {
+		if inst.status.Load() == statusBusy {
+			busyInstances = append(busyInstances, inst)
+		}
+	}
+	c.mu.Unlock()
+
+	if len(busyInstances) == 0 {
+		return
+	}
+
+	c.logger.Info("draining specialists", "busy", len(busyInstances), "grace_period", gracePeriod)
+
+	for _, inst := range busyInstances {
+		c.sendShutdownNotification(ctx, inst)
+	}
+
+	if gracePeriod > 0 {
+		select {
+		case <-time.After(gracePeriod):
+		case <-ctx.Done():
+		}
+	}
+}
+
+// forceCleanup kills all remaining specialist panes, cleans up maps, and sends
+// a "coordinator exited" error to any instance with a pending result channel.
+func (c *Core) forceCleanup(_ context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for roleName, inst := range c.specialists {
 		c.logger.Info("killing specialist", "role", roleName)
-		if inst.result != nil {
+		if p := inst.result.Load(); p != nil {
 			select {
-			case inst.result <- taskResult{err: "coordinator exited"}:
+			case *p <- taskResult{err: "coordinator exited"}:
 			default:
 				// The Ask goroutine already consumed the result (or will shortly).
 			}
 		}
-		if err := c.backend.Kill(ctx, inst.handle); err != nil {
+		if err := c.backend.Kill(context.Background(), inst.handle); err != nil {
 			c.logger.Error("kill specialist failed", "role", roleName, "err", err)
 		}
 	}
 	c.specialists = make(map[string]*instance)
 	c.instanceByAgentID = make(map[string]*instance)
+}
 
-	return waitErr
+// sendShutdownNotification sends a system notification to the specialist's
+// terminal pane informing them that the coordinator has exited.
+func (c *Core) sendShutdownNotification(ctx context.Context, inst *instance) {
+	msg := "[SYSTEM] The coordinator has exited. The session will be terminated shortly."
+	if err := c.backend.Send(ctx, inst.handle, msg); err != nil {
+		c.logger.Error("send shutdown notification failed", "role", inst.role, "err", err)
+	}
 }

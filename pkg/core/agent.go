@@ -24,7 +24,9 @@ func (c *Core) createAgent(roleName string) (types.Agent, error) {
 	if err := a.Prepare(); err != nil {
 		return nil, fmt.Errorf("core: prepare agent %q: %w", roleName, err)
 	}
+	c.mu.Lock()
 	c.agentByID[a.ID()] = a
+	c.mu.Unlock()
 	return a, nil
 }
 
@@ -40,36 +42,41 @@ func (c *Core) Ask(ctx context.Context, roleName, task string) (taskResult, erro
 		return taskResult{}, nil
 	}
 
-	inst.status = StatusBusy
-	inst.result = make(chan taskResult, 1)
+	ch := make(chan taskResult, 1)
+	inst.result.Store(&ch)
+	inst.status.Store(statusBusy)
 
 	c.logger.Info("dispatching task", "role", roleName, "task", task)
 	if err := c.backend.Send(ctx, inst.handle, task+"\n"); err != nil {
-		inst.status = StatusRunning
+		inst.status.Store(statusRunning)
+		inst.result.Store(nil)
 		return taskResult{}, fmt.Errorf("core: send task to %q: %w", roleName, err)
 	}
 
 	select {
-	case result := <-inst.result:
-		inst.result = nil // prevent cleanup from sending a stale result
-		inst.status = StatusRunning
+	case result := <-ch:
+		inst.result.Store(nil) // prevent cleanup from sending a stale result
+		inst.status.Store(statusRunning)
 		return result, nil
 	case <-time.After(defaultTaskTimeout):
-		inst.result = nil
+		inst.result.Store(nil)
 		c.logger.Warn("task timed out, killing specialist", "role", roleName)
 		c.cleanupSpecialist(ctx, inst, roleName)
 		return taskResult{}, fmt.Errorf("core: task %q timed out after %v", roleName, defaultTaskTimeout)
 	case <-ctx.Done():
-		inst.result = nil
-		inst.status = StatusRunning
+		inst.result.Store(nil)
+		inst.status.Store(statusRunning)
 		return taskResult{}, ctx.Err()
 	}
 }
 
 func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance, error) {
+	c.mu.Lock()
 	if inst := c.specialists[roleName]; inst != nil {
+		c.mu.Unlock()
 		return inst, nil
 	}
+	c.mu.Unlock()
 
 	a, err := c.createAgent(roleName)
 	if err != nil {
@@ -92,17 +99,19 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 		role:   roleName,
 		agent:  a,
 		handle: handle,
-		status: StatusStarting,
 		ready:  make(chan struct{}),
 	}
+	inst.status.Store(statusStarting)
+	c.mu.Lock()
 	c.specialists[roleName] = inst
 	c.instanceByAgentID[a.ID()] = inst
+	c.mu.Unlock()
 
 	c.logger.Info("agent spawned, waiting for SessionStart", "role", roleName)
 
 	select {
 	case <-inst.ready:
-		inst.status = StatusRunning
+		inst.status.Store(statusRunning)
 		c.logger.Info("agent ready", "role", roleName)
 		return inst, nil
 	case <-time.After(agentStartTimeout):
@@ -115,13 +124,17 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 }
 
 // cleanupSpecialist kills a specialist pane and removes its tracking entries.
+// The lock is only held for the map cleanup; the Kill call happens outside it
+// since the instance pointer is already local and not shared after removal.
 func (c *Core) cleanupSpecialist(ctx context.Context, inst *instance, roleName string) {
 	c.logger.Warn("cleaning up specialist", "role", roleName)
 	if err := c.backend.Kill(ctx, inst.handle); err != nil {
 		c.logger.Error("kill specialist after timeout failed", "role", roleName, "err", err)
 	}
+	c.mu.Lock()
 	delete(c.specialists, roleName)
 	delete(c.instanceByAgentID, inst.agent.ID())
+	c.mu.Unlock()
 }
 
 func envToMap(env []string) map[string]string {
