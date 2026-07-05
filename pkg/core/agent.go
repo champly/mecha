@@ -42,6 +42,11 @@ func (c *Core) Ask(ctx context.Context, roleName, task string) (taskResult, erro
 		return taskResult{}, nil
 	}
 
+	if err := inst.beginTask(ctx); err != nil {
+		return taskResult{}, err
+	}
+	defer inst.finishTask()
+
 	ch := make(chan taskResult, 1)
 	inst.result.Store(&ch)
 	inst.status.Store(statusBusy)
@@ -74,12 +79,18 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 	c.mu.Lock()
 	if inst := c.specialists[roleName]; inst != nil {
 		c.mu.Unlock()
+		if err := inst.waitReady(ctx); err != nil {
+			return nil, err
+		}
 		return inst, nil
 	}
+	inst := newInstance(roleName)
+	c.specialists[roleName] = inst
 	c.mu.Unlock()
 
 	a, err := c.createAgent(roleName)
 	if err != nil {
+		c.failSpecialistStart(roleName, inst, err)
 		return nil, err
 	}
 
@@ -92,18 +103,14 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 		Env:     envToMap(cmd.Env),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("core: spawn %q: %w", roleName, err)
+		spawnErr := fmt.Errorf("core: spawn %q: %w", roleName, err)
+		c.failSpecialistStart(roleName, inst, spawnErr)
+		return nil, spawnErr
 	}
 
-	inst := &instance{
-		role:   roleName,
-		agent:  a,
-		handle: handle,
-		ready:  make(chan struct{}),
-	}
-	inst.status.Store(statusStarting)
+	inst.agent = a
+	inst.handle = handle
 	c.mu.Lock()
-	c.specialists[roleName] = inst
 	c.instanceByAgentID[a.ID()] = inst
 	c.mu.Unlock()
 
@@ -111,14 +118,18 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 
 	select {
 	case <-inst.ready:
+		if inst.startErr != nil {
+			return nil, inst.startErr
+		}
 		inst.status.Store(statusRunning)
 		c.logger.Info("agent ready", "role", roleName)
 		return inst, nil
 	case <-time.After(agentStartTimeout):
-		c.cleanupSpecialist(ctx, inst, roleName)
-		return nil, fmt.Errorf("core: agent %q start timeout", roleName)
+		err := fmt.Errorf("core: agent %q start timeout", roleName)
+		c.failSpecialistStart(roleName, inst, err)
+		return nil, err
 	case <-ctx.Done():
-		c.cleanupSpecialist(ctx, inst, roleName)
+		c.failSpecialistStart(roleName, inst, ctx.Err())
 		return nil, ctx.Err()
 	}
 }
@@ -128,13 +139,20 @@ func (c *Core) ensureSpecialist(ctx context.Context, roleName string) (*instance
 // since the instance pointer is already local and not shared after removal.
 func (c *Core) cleanupSpecialist(ctx context.Context, inst *instance, roleName string) {
 	c.logger.Warn("cleaning up specialist", "role", roleName)
-	if err := c.backend.Kill(ctx, inst.handle); err != nil {
-		c.logger.Error("kill specialist after timeout failed", "role", roleName, "err", err)
+	if inst.handle != nil {
+		if err := c.backend.Kill(ctx, inst.handle); err != nil {
+			c.logger.Error("kill specialist after timeout failed", "role", roleName, "err", err)
+		}
 	}
 	c.mu.Lock()
 	delete(c.specialists, roleName)
-	delete(c.instanceByAgentID, inst.agent.ID())
+	if inst.agent != nil {
+		delete(c.agentByID, inst.agent.ID())
+		delete(c.instanceByAgentID, inst.agent.ID())
+	}
 	c.mu.Unlock()
+	inst.result.Store(nil)
+	inst.signalReady()
 }
 
 func envToMap(env []string) map[string]string {
@@ -144,4 +162,34 @@ func envToMap(env []string) map[string]string {
 		m[k] = v
 	}
 	return m
+}
+
+func newInstance(roleName string) *instance {
+	inst := &instance{
+		role:     roleName,
+		ready:    make(chan struct{}),
+		taskSlot: make(chan struct{}, 1),
+	}
+	inst.taskSlot <- struct{}{}
+	inst.status.Store(statusStarting)
+	return inst
+}
+
+func (c *Core) failSpecialistStart(roleName string, inst *instance, err error) {
+	inst.startErr = err
+	inst.signalReady()
+
+	if inst.handle != nil {
+		c.cleanupSpecialist(context.Background(), inst, roleName)
+		inst.startErr = err
+		return
+	}
+
+	c.mu.Lock()
+	delete(c.specialists, roleName)
+	if inst.agent != nil {
+		delete(c.agentByID, inst.agent.ID())
+		delete(c.instanceByAgentID, inst.agent.ID())
+	}
+	c.mu.Unlock()
 }

@@ -70,31 +70,16 @@ func TestWritePrompt(t *testing.T) {
 }
 
 func TestWriteConfig(t *testing.T) {
-	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-123", "prompt")
+	args := c.configArgs()
 
-	if err := c.writeConfig(); err != nil {
-		t.Fatalf("writeConfig() error: %v", err)
-	}
-
-	data, err := os.ReadFile(c.configTomlPath())
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
-	}
-
-	if !strings.Contains(string(data), c.mechaBinary) {
-		t.Errorf("config.toml missing mecha path, got: %s", data)
-	}
-	if !strings.Contains(string(data), "agent-123") {
-		t.Errorf("config.toml missing agent ID, got: %s", data)
-	}
-	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop} {
-		if !strings.Contains(string(data), event) {
-			t.Errorf("config.toml missing hook event %q", event)
+	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
+		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{command=\"mecha\",args=[\"webhook\",\"--id\",\"agent-123\",\"--port\",\"12345\"]}]}]") {
+			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
 	}
-	if strings.Contains(string(data), agenttypes.EventStopFailure) {
-		t.Errorf("config.toml should not contain StopFailure")
+	if !slices.Contains(args, "model_instructions_file=\"/ws/.mecha/roles/lead/AGENTS.md\"") {
+		t.Errorf("config args missing model_instructions_file override: %v", args)
 	}
 }
 
@@ -110,9 +95,6 @@ func TestPrepare(t *testing.T) {
 	if _, err := os.Stat(c.agentsMdPath()); err != nil {
 		t.Errorf("AGENTS.md not created: %v", err)
 	}
-	if _, err := os.Stat(c.configTomlPath()); err != nil {
-		t.Errorf("config.toml not created: %v", err)
-	}
 }
 
 func TestCmd(t *testing.T) {
@@ -122,12 +104,24 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.roleDir {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.roleDir)
+	if cmd.Dir != c.workspace {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.workspace)
 	}
 
 	if !slices.Contains(cmd.Args, "--cd") {
 		t.Errorf("--cd should be present in args: %v", cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, c.workspace) {
+		t.Errorf("workspace should be present in args: %v", cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, "--config") {
+		t.Errorf("--config should be present in args: %v", cmd.Args)
+	}
+
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "CODEX_HOME=") {
+			t.Errorf("cmd.Env should not override Codex config root: %v", cmd.Env)
+		}
 	}
 }
 
@@ -172,6 +166,28 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	}
 	if e.Output != "" {
 		t.Errorf("Output should be empty for SessionStart, got %q", e.Output)
+	}
+}
+
+func TestParseHookEvent_StopFailure(t *testing.T) {
+	raw := []byte(`{"session_id":"deadbeef","hook_event_name":"StopFailure","error_type":"overloaded"}`)
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-004", "prompt")
+
+	e, err := c.ParseHookEvent(raw)
+	if err != nil {
+		t.Fatalf("ParseHookEvent() error: %v", err)
+	}
+	if e.Event != agenttypes.EventStopFailure {
+		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStopFailure)
+	}
+	if e.SessionID != "deadbeef" {
+		t.Errorf("SessionID = %q, want %q", e.SessionID, "deadbeef")
+	}
+	if e.Error != "overloaded" {
+		t.Errorf("Error = %q, want %q", e.Error, "overloaded")
+	}
+	if e.OutputSource != "none" {
+		t.Errorf("OutputSource = %q, want %q", e.OutputSource, "none")
 	}
 }
 

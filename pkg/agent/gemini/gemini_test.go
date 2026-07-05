@@ -121,6 +121,18 @@ func TestCmd(t *testing.T) {
 	if cmd.Dir != c.roleDir {
 		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.roleDir)
 	}
+
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "GEMINI_CLI_HOME=") {
+			t.Errorf("cmd.Env should not override Gemini config root: %v", cmd.Env)
+		}
+		if strings.HasPrefix(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH=") {
+			t.Errorf("cmd.Env should not override system settings path: %v", cmd.Env)
+		}
+		if strings.HasPrefix(env, "GEMINI_SYSTEM_MD=") {
+			t.Errorf("cmd.Env should not override system prompt path: %v", cmd.Env)
+		}
+	}
 }
 
 func TestParseHookEvent_AfterAgent(t *testing.T) {

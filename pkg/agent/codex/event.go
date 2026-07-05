@@ -11,6 +11,7 @@ import (
 var eventMap = map[string]string{
 	"SessionStart": agenttypes.EventSessionStart,
 	"Stop":         agenttypes.EventStop,
+	"StopFailure":  agenttypes.EventStopFailure,
 }
 
 // ParseHookEvent parses raw Codex Hook JSON into a unified HookEvent.
@@ -26,6 +27,7 @@ var eventMap = map[string]string{
 // Event-specific fields:
 //
 //	Stop:            last_assistant_message string  — Codex's final response
+//	StopFailure:     error_type / error     string  — provider-specific failure reason
 //	SessionStart:    source                 string  — startup | resume | clear | compact
 func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	var m map[string]any
@@ -59,6 +61,13 @@ func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 			e.Output = msg
 		}
 		e.OutputSource = "provider_field"
+	case agenttypes.EventStopFailure:
+		if et, ok := m["error_type"].(string); ok && et != "" {
+			e.Error = et
+		} else if msg, ok := m["error"].(string); ok && msg != "" {
+			e.Error = msg
+		}
+		e.OutputSource = "none"
 	}
 
 	return e, nil

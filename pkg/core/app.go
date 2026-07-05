@@ -25,17 +25,52 @@ const (
 )
 
 type instance struct {
-	role   string
-	agent  types.Agent
-	handle term.Handle
-	status atomic.Int32
-	ready  chan struct{}   // closed when SessionStart arrives
-	result atomic.Pointer[chan taskResult] // per-task completion signal
+	role      string
+	agent     types.Agent
+	handle    term.Handle
+	status    atomic.Int32
+	ready     chan struct{} // closed when startup completes (success or failure)
+	readyOnce sync.Once
+	startErr  error
+	taskSlot  chan struct{}
+	result    atomic.Pointer[chan taskResult] // per-task completion signal
 }
 
 type taskResult struct {
 	output string
 	err    string
+}
+
+func (inst *instance) signalReady() {
+	inst.readyOnce.Do(func() {
+		close(inst.ready)
+	})
+}
+
+func (inst *instance) waitReady(ctx context.Context) error {
+	if inst.status.Load() != statusStarting {
+		return nil
+	}
+
+	select {
+	case <-inst.ready:
+		return inst.startErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (inst *instance) beginTask(ctx context.Context) error {
+	select {
+	case <-inst.taskSlot:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (inst *instance) finishTask() {
+	inst.taskSlot <- struct{}{}
 }
 
 // Core manages the lifecycle of all role agents in a workspace.

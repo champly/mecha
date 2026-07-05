@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,10 +23,11 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockBackend struct {
-	spawned []term.Spec
-	sent    map[string][]string
-	killed  map[string]bool
-	sendErr error // if non-nil, Send returns this error
+	spawned  []term.Spec
+	sent     map[string][]string
+	killed   map[string]bool
+	sendErr  error // if non-nil, Send returns this error
+	sendHook func(term.Handle, string)
 }
 
 func newMockBackend() *mockBackend {
@@ -43,11 +46,14 @@ func (m *mockBackend) Send(_ context.Context, handle term.Handle, text string) e
 	if m.sendErr != nil {
 		return m.sendErr
 	}
+	if m.sendHook != nil {
+		m.sendHook(handle, text)
+	}
 	m.sent[handle.ID()] = append(m.sent[handle.ID()], text)
 	return nil
 }
 
-func (m *mockBackend) Capture(_ context.Context, _ term.Handle) (string, error)  { return "", nil }
+func (m *mockBackend) Capture(_ context.Context, _ term.Handle) (string, error)    { return "", nil }
 func (m *mockBackend) CaptureAll(_ context.Context, _ term.Handle) (string, error) { return "", nil }
 
 func (m *mockBackend) Kill(_ context.Context, handle term.Handle) error {
@@ -66,9 +72,9 @@ func (h mockHandle) PaneID() string { return h.id }
 
 type mockAgent struct{ id string }
 
-func (a *mockAgent) Prepare() error                { return nil }
-func (a *mockAgent) Cmd() *exec.Cmd                { return exec.Command("echo") }
-func (a *mockAgent) ID() string                    { return a.id }
+func (a *mockAgent) Prepare() error { return nil }
+func (a *mockAgent) Cmd() *exec.Cmd { return exec.Command("echo") }
+func (a *mockAgent) ID() string     { return a.id }
 func (a *mockAgent) ParseHookEvent(raw []byte) (types.HookEvent, error) {
 	var m map[string]string
 	json.Unmarshal(raw, &m)
@@ -100,14 +106,13 @@ func testCore(t *testing.T) (*Core, *mockBackend) {
 
 func addAgent(c *Core, agentID string, status int32) *instance {
 	a := &mockAgent{id: agentID}
-	inst := &instance{
-		role:   "test-role",
-		agent:  a,
-		handle: mockHandle{id: agentID + "-handle"},
-	}
+	inst := newInstance("test-role")
+	inst.agent = a
+	inst.handle = mockHandle{id: agentID + "-handle"}
 	inst.status.Store(status)
 	if status == statusStarting {
 		inst.ready = make(chan struct{})
+		inst.readyOnce = sync.Once{}
 	}
 	c.agentByID[agentID] = a
 	c.instanceByAgentID[agentID] = inst
@@ -314,6 +319,98 @@ func TestAsk_SendErrorResetsStatus(t *testing.T) {
 	}
 }
 
+func TestAsk_SerializesConcurrentTasks(t *testing.T) {
+	c, backend := testCore(t)
+	addAgent(c, "agent-1", statusRunning)
+
+	sendStarted := make(chan string, 2)
+	var sendCount atomic.Int32
+	backend.sendHook = func(_ term.Handle, text string) {
+		sendCount.Add(1)
+		sendStarted <- text
+	}
+
+	firstDone := make(chan struct{})
+	secondDone := make(chan struct{})
+	var firstResult taskResult
+	var secondResult taskResult
+	var firstErr error
+	var secondErr error
+
+	go func() {
+		firstResult, firstErr = c.Ask(context.Background(), "test-role", "first task")
+		close(firstDone)
+	}()
+
+	select {
+	case got := <-sendStarted:
+		if got != "first task\n" {
+			t.Fatalf("first send = %q, want %q", got, "first task\\n")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first task was not sent")
+	}
+
+	go func() {
+		secondResult, secondErr = c.Ask(context.Background(), "test-role", "second task")
+		close(secondDone)
+	}()
+
+	select {
+	case got := <-sendStarted:
+		t.Fatalf("second task sent before first completed: %q", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	c.onEvent("agent-1", types.HookEvent{Event: types.EventStop, Output: "first output"})
+
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first Ask did not complete")
+	}
+
+	if firstErr != nil {
+		t.Fatalf("first Ask error: %v", firstErr)
+	}
+	if firstResult.output != "first output" {
+		t.Fatalf("first output = %q, want %q", firstResult.output, "first output")
+	}
+
+	select {
+	case got := <-sendStarted:
+		if got != "second task\n" {
+			t.Fatalf("second send = %q, want %q", got, "second task\\n")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second task was not sent after first completion")
+	}
+
+	c.onEvent("agent-1", types.HookEvent{Event: types.EventStop, Output: "second output"})
+
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("second Ask did not complete")
+	}
+
+	if secondErr != nil {
+		t.Fatalf("second Ask error: %v", secondErr)
+	}
+	if secondResult.output != "second output" {
+		t.Fatalf("second output = %q, want %q", secondResult.output, "second output")
+	}
+	if sendCount.Load() != 2 {
+		t.Fatalf("send count = %d, want 2", sendCount.Load())
+	}
+	if c.specialists["test-role"].status.Load() != statusRunning {
+		t.Fatalf("status should return to running after serialized tasks")
+	}
+	if c.specialists["test-role"].result.Load() != nil {
+		t.Fatal("result channel should be cleared after serialized tasks")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ensureSpecialist: reuse
 // ---------------------------------------------------------------------------
@@ -373,6 +470,9 @@ func TestLaunchCoordinator_Cleanup(t *testing.T) {
 	}
 	if len(c.instanceByAgentID) != 0 {
 		t.Errorf("instanceByAgentID should be empty after forceCleanup, got %d", len(c.instanceByAgentID))
+	}
+	if len(c.agentByID) != 0 {
+		t.Errorf("agentByID should be empty after forceCleanup, got %d", len(c.agentByID))
 	}
 
 	// Assert: both instances were killed.

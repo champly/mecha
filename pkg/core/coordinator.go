@@ -108,6 +108,7 @@ func (c *Core) forceCleanup(_ context.Context) {
 		}
 	}
 	c.specialists = make(map[string]*instance)
+	c.agentByID = make(map[string]types.Agent)
 	c.instanceByAgentID = make(map[string]*instance)
 }
 

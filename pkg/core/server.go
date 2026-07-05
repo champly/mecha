@@ -109,7 +109,7 @@ func (c *Core) onEvent(agentID string, event types.HookEvent) {
 	switch event.Event {
 	case types.EventSessionStart:
 		if inst.status.Load() == statusStarting {
-			close(inst.ready)
+			inst.signalReady()
 		}
 
 	case types.EventStop:
