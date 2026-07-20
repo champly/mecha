@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package api;
+
+option go_package = "github.com/champly/mecha/pkg/api";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+message RegisterRequest {
+  string id = 1;
+}
+
+message RegisterResponse {
+  string workspace = 1;
+  string prompt = 2;
+  string role_name = 3;
+  string mecha_binary = 4;
+  AgentConfig agent = 5;
+}
+
+message AgentConfig {
+  string type = 1;
+  string binary = 2;
+  string model = 3;
+  google.protobuf.Struct params = 4;
+  map<string, string> envs = 5;
+}
+
+message StatusRequest {
+  string id = 1;
+  string status = 2;
+  string msg = 3;
+}
+
+message AskRequest {
+  string role = 1;
+  string task = 2;
+}
+
+message AskResponse {
+  string id = 1;
+  bool success = 2;
+  string result = 3;
+}
+
+message TaskRequest {
+  string id = 1;
+  string task = 2;
+}
+
+message TaskResult {
+  string id = 1;
+  bool success = 2;
+  string result = 3;
+}
+
+service Core {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc ReportStatus(StatusRequest) returns (google.protobuf.Empty);
+  rpc Ask(AskRequest) returns (AskResponse);
+  rpc TaskChannel(stream TaskResult) returns (stream TaskRequest);
+}

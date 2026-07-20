@@ -1,135 +1,98 @@
 package core
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"strings"
 
-	"github.com/champly/mecha/pkg/agent/types"
+	"github.com/champly/mecha/pkg/agent"
+	"github.com/champly/mecha/pkg/api"
+	"github.com/champly/mecha/pkg/config"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const maxRequestBody = 1 << 20 // 1 MiB
-
-func (c *Core) startHTTPServer(ln net.Listener) *http.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/webhook/", c.handleWebhook)
-	mux.HandleFunc("/ask", c.handleAsk)
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln)
-	return srv
+// grpcService implements api.CoreServer, routing RPCs to registry instances.
+type grpcService struct {
+	api.UnimplementedCoreServer
+	core *Core
 }
 
-func (c *Core) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	agentID := strings.TrimPrefix(r.URL.Path, "/webhook/")
-	if agentID == "" {
-		http.Error(w, "missing agent ID", http.StatusBadRequest)
-		return
-	}
-
-	c.mu.Lock()
-	a, ok := c.agentByID[agentID]
-	c.mu.Unlock()
-	if !ok {
-		http.Error(w, "unknown agent: "+agentID, http.StatusNotFound)
-		return
-	}
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	event, err := a.ParseHookEvent(body)
-	if err != nil {
-		c.logger.Error("webhook parse error", "err", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	c.onEvent(agentID, event)
-	w.WriteHeader(http.StatusOK)
-}
-
-func (c *Core) handleAsk(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Role string `json:"role"`
-		Task string `json:"task"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	result, err := c.Ask(r.Context(), req.Role, req.Task)
-	if err != nil {
-		c.logger.Error("ask failed", "role", req.Role, "err", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if result.err != "" {
-		c.logger.Error("task failed", "role", req.Role, "err", result.err)
-		http.Error(w, result.err, http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprint(w, result.output)
-}
-
-func (c *Core) onEvent(agentID string, event types.HookEvent) {
-	c.mu.Lock()
-	inst := c.instanceByAgentID[agentID]
-	c.mu.Unlock()
+// Register handles agentd registration and returns the rendered role config.
+func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
+	inst := s.core.registry.get(req.Id)
 	if inst == nil {
-		return
+		return nil, fmt.Errorf("unknown instance %q", req.Id)
+	}
+	inst.markRegistered()
+
+	role, ok := s.core.findRole(inst.role)
+	if !ok {
+		return nil, fmt.Errorf("unknown role %q", inst.role)
 	}
 
-	c.logger.Info(
-		"hook event",
-		"event", event.Event,
-		"role", inst.role,
-		"agent", agentID,
-		"session", event.SessionID,
-	)
+	return &api.RegisterResponse{
+		Workspace: s.core.workspace,
+		Prompt: agent.RenderPrompt(s.core.workspace, config.Runtime{
+			MechaBinary: s.core.mechaBinary,
+			Addr:        s.core.addr,
+		}, role, s.core.profileRoles()),
+		RoleName:    inst.role,
+		Agent:       api.AgentConfigFromNative(role.Agent),
+		MechaBinary: s.core.mechaBinary,
+	}, nil
+}
 
-	switch event.Event {
-	case types.EventSessionStart:
-		if inst.status.Load() == statusStarting {
-			inst.signalReady()
-		}
+// ReportStatus handles agentd status reports: started → ready, exited → unhealthy.
+func (s *grpcService) ReportStatus(ctx context.Context, req *api.StatusRequest) (*emptypb.Empty, error) {
+	inst := s.core.registry.get(req.Id)
+	if inst == nil {
+		return &emptypb.Empty{}, nil
+	}
 
-	case types.EventStop:
-		if inst.status.Load() == statusBusy {
-			if p := inst.result.Load(); p != nil {
-				select {
-				case *p <- taskResult{output: event.Output}:
-				default:
-				}
-			}
-		}
+	switch req.Status {
+	case api.StatusStarted:
+		inst.markStarted()
+		s.core.logger.Info("agent started", "role", inst.role, "id", inst.id)
+	case api.StatusExited:
+		inst.markExited()
+		s.core.logger.Info("agent exited", "role", inst.role, "id", inst.id)
+	}
+	return &emptypb.Empty{}, nil
+}
 
-	case types.EventStopFailure:
-		if inst.status.Load() == statusBusy {
-			if p := inst.result.Load(); p != nil {
-				select {
-				case *p <- taskResult{err: event.Error}:
-				default:
-				}
-			}
+// Ask dispatches a task to the role's specialist.
+func (s *grpcService) Ask(ctx context.Context, req *api.AskRequest) (*api.AskResponse, error) {
+	inst, err := s.core.ensureSpecialist(ctx, req.Role)
+	if err != nil {
+		return nil, err
+	}
+	return inst.execute(ctx, req.Task)
+}
+
+// TaskChannel handles the agentd bidi stream: attach it, then deliver task
+// results to waiting Asks until the stream breaks.
+func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]) error {
+	id := api.GetInstanceID(stream.Context())
+	if id == "" {
+		return fmt.Errorf("missing instance ID")
+	}
+	inst := s.core.registry.get(id)
+	if inst == nil {
+		return fmt.Errorf("unknown instance %q for TaskChannel", id)
+	}
+
+	inst.attach(stream)
+	defer inst.detach()
+
+	for {
+		result, err := stream.Recv()
+		if err != nil {
+			return err
 		}
+		inst.deliverResult(&api.AskResponse{
+			Id:      result.Id,
+			Success: result.Success,
+			Result:  result.Result,
+		})
 	}
 }

@@ -1,8 +1,4 @@
 // Package term provides terminal pane management across different backends.
-//
-// Usage:
-//
-//	backend, err := term.New()
 package term
 
 import (

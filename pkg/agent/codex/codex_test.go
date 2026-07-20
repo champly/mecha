@@ -20,31 +20,28 @@ func testAgentConfig() config.AgentConfig {
 }
 
 func testRuntime() config.Runtime {
-	return config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
+	return config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
 }
 
-func testNew(workspace, roleDir, agentID, prompt string) *Codex {
+func testNew(workspace, roleDir, prompt string) *Codex {
 	ctx := agenttypes.AgentContext{
-		Workspace: workspace,
-		RoleDir:   roleDir,
-		Prompt:    prompt,
-		AgentID:   agentID,
+		Workspace:   workspace,
+		RoleDir:     roleDir,
+		Prompt:      prompt,
+		WebhookAddr: "127.0.0.1:12345",
 	}
 	a, _ := New(ctx, testAgentConfig(), testRuntime())
 	return a.(*Codex)
 }
 
 func TestNew(t *testing.T) {
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "test prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 
 	if c.workspace != "/ws" {
 		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
 	}
 	if c.roleDir != "/ws/.mecha/roles/lead" {
 		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
-	}
-	if c.agentID != "agent-001" {
-		t.Errorf("agentID = %q, want %q", c.agentID, "agent-001")
 	}
 	if c.prompt != "test prompt" {
 		t.Errorf("prompt = %q, want %q", c.prompt, "test prompt")
@@ -54,7 +51,7 @@ func TestNew(t *testing.T) {
 func TestWritePrompt(t *testing.T) {
 	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-001", content)
+	c := testNew(dir, filepath.Join(dir, "role"), content)
 
 	if err := c.writePrompt(); err != nil {
 		t.Fatalf("writePrompt() error: %v", err)
@@ -70,11 +67,11 @@ func TestWritePrompt(t *testing.T) {
 }
 
 func TestWriteConfig(t *testing.T) {
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-123", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 	args := c.configArgs()
 
 	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
-		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{command=\"mecha\",args=[\"webhook\",\"--id\",\"agent-123\",\"--port\",\"12345\"]}]}]") {
+		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{command=\"mecha\",args=[\"webhook\",\"--addr\",\"127.0.0.1:12345\"]}]}]") {
 			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
 	}
@@ -86,7 +83,7 @@ func TestWriteConfig(t *testing.T) {
 func TestPrepare(t *testing.T) {
 	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", prompt)
+	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 
 	if err := c.Prepare(); err != nil {
 		t.Fatalf("Prepare() error: %v", err)
@@ -100,7 +97,7 @@ func TestPrepare(t *testing.T) {
 func TestCmd(t *testing.T) {
 	dir := t.TempDir()
 	roleDir := filepath.Join(dir, "role")
-	c := testNew(dir, roleDir, "agent-001", "prompt")
+	c := testNew(dir, roleDir, "prompt")
 
 	cmd := c.Cmd()
 
@@ -127,7 +124,7 @@ func TestCmd(t *testing.T) {
 
 func TestParseHookEvent_Stop(t *testing.T) {
 	raw := []byte(`{"session_id":"d54db35e","hook_event_name":"Stop","last_assistant_message":"hello world"}`)
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -135,9 +132,6 @@ func TestParseHookEvent_Stop(t *testing.T) {
 	}
 	if e.Event != agenttypes.EventStop {
 		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStop)
-	}
-	if e.AgentID != "agent-001" {
-		t.Errorf("AgentID = %q, want %q", e.AgentID, "agent-001")
 	}
 	if e.SessionID != "d54db35e" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "d54db35e")
@@ -152,7 +146,7 @@ func TestParseHookEvent_Stop(t *testing.T) {
 
 func TestParseHookEvent_SessionStart(t *testing.T) {
 	raw := []byte(`{"session_id":"abc123","hook_event_name":"SessionStart"}`)
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-002", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -171,7 +165,7 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 
 func TestParseHookEvent_StopFailure(t *testing.T) {
 	raw := []byte(`{"session_id":"deadbeef","hook_event_name":"StopFailure","error_type":"overloaded"}`)
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-004", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 
 	e, err := c.ParseHookEvent(raw)
 	if err != nil {
@@ -193,7 +187,7 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 
 func TestParseHookEvent_Unknown(t *testing.T) {
 	raw := []byte(`{"hook_event_name":"PostToolUse"}`)
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-003", "prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 
 	_, err := c.ParseHookEvent(raw)
 	if err == nil {

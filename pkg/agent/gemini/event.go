@@ -7,15 +7,13 @@ import (
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 )
 
-// eventAfterAgent is the Gemini CLI hook event mapped to mecha's EventStop.
-// AfterAgent fires after each agent loop iteration and carries prompt_response
-// (the assistant's response text), analogous to last_assistant_message in
-// Claude Code's Stop event.
+// eventAfterAgent fires after each agent loop iteration carrying prompt_response;
+// it maps to EventStop, analogous to Claude's Stop/last_assistant_message.
 const eventAfterAgent = "AfterAgent"
 
 // eventMap converts Gemini CLI's hook_event_name values to internal event constants.
 var eventMap = map[string]string{
-	"SessionStart": agenttypes.EventSessionStart,
+	"SessionStart":  agenttypes.EventSessionStart,
 	eventAfterAgent: agenttypes.EventStop,
 }
 
@@ -50,9 +48,8 @@ func (g *Gemini) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	}
 
 	e := agenttypes.HookEvent{
-		AgentID: g.agentID,
-		Event:   event,
-		Raw:     raw,
+		Event: event,
+		Raw:   raw,
 	}
 
 	if sid, ok := m["session_id"].(string); ok {

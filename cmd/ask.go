@@ -1,54 +1,50 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 
+	"github.com/champly/mecha/pkg/api"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func newAskCmd() *cobra.Command {
-	var port string
+	var addr string
 
 	cmd := &cobra.Command{
 		Use:   "ask <role> <task>",
 		Short: "Send a task delegation to the mecha server (blocks until complete)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := map[string]string{
-				"role": args[0],
-				"task": args[1],
+			if addr == "" {
+				return fmt.Errorf("ask: --addr is required")
 			}
-			data, err := json.Marshal(body)
+
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
-				return fmt.Errorf("ask: marshal body: %w", err)
+				return fmt.Errorf("ask: dial %s: %w", addr, err)
 			}
+			defer conn.Close()
 
-			url := fmt.Sprintf("http://127.0.0.1:%s/ask", port)
-			resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+			resp, err := api.NewCoreClient(conn).Ask(cmd.Context(), &api.AskRequest{
+				Role: args[0],
+				Task: args[1],
+			})
 			if err != nil {
-				return fmt.Errorf("ask: post to %s: %w", url, err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-				if readErr != nil {
-					return fmt.Errorf("ask: server returned %d (failed to read body: %w)", resp.StatusCode, readErr)
-				}
-				return fmt.Errorf("ask: server returned %d: %s", resp.StatusCode, string(body))
+				return fmt.Errorf("ask: rpc failed: %w", err)
 			}
 
-			io.Copy(os.Stdout, resp.Body)
+			if !resp.GetSuccess() {
+				return fmt.Errorf("ask: %s", resp.GetResult())
+			}
+
+			fmt.Fprint(cmd.OutOrStdout(), resp.GetResult())
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&port, "port", "", "Server port")
-	_ = cmd.MarkFlagRequired("port")
+	cmd.Flags().StringVar(&addr, "addr", "", "Server address (host:port)")
+	_ = cmd.MarkFlagRequired("addr")
 	return cmd
 }

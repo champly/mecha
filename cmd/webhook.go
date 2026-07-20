@@ -10,38 +10,36 @@ import (
 )
 
 func newWebhookCmd() *cobra.Command {
-	var agentID, port string
+	var addr string
 
 	cmd := &cobra.Command{
 		Use:   "webhook",
-		Short: "Forward a Claude Code hook event to the mecha server",
+		Short: "Forward an agent hook event to the local agentd webhook server",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if addr == "" {
+				return fmt.Errorf("webhook: --addr is required")
+			}
+
 			data, err := io.ReadAll(cmd.InOrStdin())
 			if err != nil {
 				return fmt.Errorf("webhook: read stdin: %w", err)
 			}
 
-			url := fmt.Sprintf("http://127.0.0.1:%s/webhook/%s", port, agentID)
-			resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+			resp, err := http.Post("http://"+addr+"/webhook", "application/json", bytes.NewReader(data))
 			if err != nil {
-				return fmt.Errorf("webhook: post to %s: %w", url, err)
+				return fmt.Errorf("webhook: post %s: %w", addr, err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-				if readErr != nil {
-					return fmt.Errorf("webhook: server returned %d (failed to read body: %w)", resp.StatusCode, readErr)
-				}
-				return fmt.Errorf("webhook: server returned %d: %s", resp.StatusCode, string(body))
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+				return fmt.Errorf("webhook: server returned %s: %s", resp.Status, body)
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&agentID, "id", "", "Agent ID")
-	cmd.Flags().StringVar(&port, "port", "", "Server port")
-	_ = cmd.MarkFlagRequired("id")
-	_ = cmd.MarkFlagRequired("port")
+	cmd.Flags().StringVar(&addr, "addr", "", "Agentd webhook address (host:port)")
+	_ = cmd.MarkFlagRequired("addr")
 	return cmd
 }

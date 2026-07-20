@@ -11,11 +11,13 @@ import (
 	"github.com/champly/mecha/pkg/term/driver"
 )
 
-// ITerm2 is a driver.Provider backed by iTerm2 via WebSocket.
+// activeSession targets iTerm2's currently active session.
+const activeSession = "active"
+
+// ITerm2 is a driver.Backend backed by iTerm2 via WebSocket.
 type ITerm2 struct {
 	mu       sync.Mutex
 	conn     *conn
-	windowID string
 	sessions driver.Chain
 }
 
@@ -27,11 +29,6 @@ func New() (driver.Backend, error) {
 		return nil, err
 	}
 	return &ITerm2{conn: c}, nil
-}
-
-// Name returns the driver name.
-func (p *ITerm2) Name() string {
-	return "iterm2"
 }
 
 // Match reports whether the current environment is iTerm2.
@@ -51,12 +48,6 @@ func (p *ITerm2) ensureConn() error {
 	return nil
 }
 
-func (p *ITerm2) currentSession() (string, error) {
-	// iTerm2 doesn't expose "current session" directly via the raw API.
-	// We use "active" as a special session identifier accepted by iTerm2.
-	return "active", nil
-}
-
 func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -65,29 +56,20 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 		return nil, err
 	}
 
-	cmd := driver.BuildBootstrap(spec)
-
 	var sessionID string
 	var err error
 	if p.sessions.Empty() {
 		// First split: split the current session vertically.
-		cur, err := p.currentSession()
-		if err != nil {
-			return nil, err
-		}
-		sessionID, err = p.conn.splitSession(cur, true) // vertical
-		if err != nil {
-			return nil, err
-		}
+		sessionID, err = p.conn.splitSession(activeSession, true) // vertical
 	} else {
 		// Subsequent splits: split the last session horizontally.
 		sessionID, err = p.conn.splitSession(p.sessions.Last(), false) // horizontal
-		if err != nil {
-			return nil, err
-		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	if cmd != "" {
+	if cmd := driver.BuildCommand(spec); cmd != "" {
 		// \n alone causes line feed without carriage return.
 		// \r\n gives the terminal both: cursor to column 0 + down one line.
 		if err := p.conn.sendText(sessionID, cmd+"\r\n"); err != nil {
@@ -96,35 +78,7 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	}
 
 	p.sessions.Push(sessionID)
-	return driver.NewID("iterm2", sessionID), nil
-}
-
-func (p *ITerm2) Send(ctx context.Context, h driver.Handle, text string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if err := p.ensureConn(); err != nil {
-		return err
-	}
-
-	// \n alone causes line feed without carriage return.
-	// Replace with \r\n so the terminal gets both cursor reset and line feed.
-	text = strings.ReplaceAll(text, "\n", "\r\n")
-	return p.conn.sendText(h.PaneID(), text)
-}
-
-func (p *ITerm2) Capture(ctx context.Context, h driver.Handle) (string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if err := p.ensureConn(); err != nil {
-		return "", err
-	}
-	return p.conn.getBuffer(h.PaneID(), false)
-}
-
-func (p *ITerm2) CaptureAll(ctx context.Context, h driver.Handle) (string, error) {
-	return p.conn.getBuffer(h.PaneID(), true)
+	return driver.NewHandle("iterm2", sessionID), nil
 }
 
 func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {

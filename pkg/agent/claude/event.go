@@ -15,22 +15,8 @@ var eventMap = map[string]string{
 	"StopFailure":   agenttypes.EventStopFailure,
 }
 
-// ParseHookEvent parses raw Claude Hook JSON into a unified HookEvent.
-//
+// ParseHookEvent parses raw Claude hook JSON into a unified HookEvent.
 // Reference: https://code.claude.com/docs/en/hooks
-//
-// Claude Code hook events share these common fields:
-//
-//	hook_event_name  string   — "SessionStart" | "PostToolBatch" | "Stop" | "StopFailure"
-//	session_id       string   — session identifier
-//	transcript_path  string   — path to conversation transcript
-//	cwd              string   — current working directory
-//
-// Event-specific fields:
-//
-//	Stop:            last_assistant_message string  — Claude's final response
-//	StopFailure:     error_type             string  — rate_limit | overloaded | authentication_failed | ...
-//	SessionStart:    source                 string  — startup | resume | clear | compact
 func (c *Claude) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -48,9 +34,8 @@ func (c *Claude) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	}
 
 	e := agenttypes.HookEvent{
-		AgentID: c.agentID,
-		Event:   event,
-		Raw:     raw,
+		Event: event,
+		Raw:   raw,
 	}
 
 	if sid, ok := m["session_id"].(string); ok {

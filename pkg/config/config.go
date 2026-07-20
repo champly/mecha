@@ -30,12 +30,10 @@ func RoleDir(workspace, roleName string) string {
 // When nil, validation is skipped. The agent package sets this during init().
 var ValidateAgentType func(typ string) bool
 
-// MechaBinary is the default path to the mecha binary, used for webhook
-// callbacks. Override at build time with ldflags:
+// MechaBinary is the default mecha binary path for webhook callbacks; Core
+// copies it into Runtime.MechaBinary at startup. Override via ldflags:
 //
 //	-X github.com/champly/mecha/pkg/config.MechaBinary=/custom/path
-//
-// Core reads this at startup to populate [Runtime.MechaBinary].
 var MechaBinary = "mecha"
 
 // Runtime holds values that are determined at startup and needed throughout
@@ -43,7 +41,7 @@ var MechaBinary = "mecha"
 // between core, agent, and provider packages.
 type Runtime struct {
 	MechaBinary string // path to mecha binary (from config.MechaBinary by default)
-	WebhookPort string // HTTP server port, set after bind
+	Addr        string // Core gRPC listen address (host:port)
 }
 
 // MechaDir returns the path to the mecha global directory (~/.mecha).
@@ -91,11 +89,6 @@ type Config struct {
 
 	Profile  string                   `yaml:"profile"`
 	Profiles map[string]ProfileConfig `yaml:"profiles"`
-
-	// ShutdownGracePeriod is the duration to wait for in-flight tasks to
-	// complete after the coordinator exits. Uses Go duration string format (e.g. "30s", "1m").
-	// Zero or empty defaults to 30s. Set to "0s" to disable waiting (immediate kill).
-	ShutdownGracePeriod string `yaml:"shutdown_grace_period,omitempty"`
 }
 
 // LoadConfig reads YAML config from path, validates it, and completes it with defaults.
@@ -138,11 +131,8 @@ func parseConfigFile(path string) (Config, error) {
 	return c, nil
 }
 
-// validate checks basic config consistency:
-// - agents[].name must be non-empty and unique
-// - config.agent must reference an existing agent when set
-// - each role must resolve to an existing agent name
-// - each profile must have exactly one coordinator role (is_coordinator=true)
+// validate checks basic consistency: unique agent names, resolvable agent
+// references, and exactly one coordinator role per profile.
 func (c Config) validate() error {
 	agentNames := make(map[string]struct{}, len(c.Agents))
 	for _, agent := range c.Agents {
@@ -200,16 +190,8 @@ func (c Config) validate() error {
 	return nil
 }
 
-// complete normalizes and enriches config for later usage.
-// It mutates c in place and must only be called once, immediately after
-// validate(), before any concurrent access.
-//
-// The c.Profiles[profileName] = profile reassignment below ensures the
-// map entry is replaced with the updated copy. Although element-level
-// mutations via &profile.Roles[i] share the underlying array and would
-// be visible without write-back, reassigning the map entry guards against
-// future code that might append to Roles (which would create a new array
-// local to the copy).
+// complete normalizes fields and resolves each role's agent config in place.
+// Must be called once, immediately after validate, before concurrent use.
 func (c *Config) complete() {
 	c.Agent = strings.TrimSpace(c.Agent)
 	c.Profile = strings.TrimSpace(c.Profile)
@@ -265,6 +247,7 @@ func (c *Config) complete() {
 
 			role.Agent = resolved
 		}
+		// Write back: a future append to Roles would reallocate only the copy.
 		c.Profiles[profileName] = profile
 	}
 }
@@ -278,11 +261,8 @@ func (c Config) findAgent(name string) (AgentConfig, bool) {
 	return AgentConfig{}, false
 }
 
-// InitConfig writes the default config.yaml to ~/.mecha/config.yaml.
-// If the file already exists and force is false, the existing file is renamed
-// to config.yaml.bak before writing the new one. If force is true, it is
-// overwritten directly.
-// The directory ~/.mecha/ is created if it does not exist.
+// InitConfig writes the default config to ~/.mecha/config.yaml, creating the
+// directory if needed. An existing file is renamed to .bak unless force is set.
 func InitConfig(force bool) (path string, err error) {
 	dir, err := MechaDir()
 	if err != nil {
@@ -297,14 +277,12 @@ func InitConfig(force bool) (path string, err error) {
 
 	if _, statErr := os.Stat(path); statErr == nil {
 		if force {
-			// Overwrite directly
 			if err := os.WriteFile(path, defaultConfigYAML, 0o644); err != nil {
 				return "", fmt.Errorf("config: cannot write %q: %w", path, err)
 			}
 			return path, nil
 		}
 
-		// Backup existing file
 		bakPath := path + ".bak"
 		os.Remove(bakPath) // remove old bak if any
 		if err := os.Rename(path, bakPath); err != nil {

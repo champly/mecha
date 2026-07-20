@@ -18,6 +18,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newRunCmd())
 	rootCmd.AddCommand(newWebhookCmd())
+	rootCmd.AddCommand(newAgentdCmd())
 	rootCmd.AddCommand(newAskCmd())
 	rootCmd.AddCommand(newVersionCmd())
 

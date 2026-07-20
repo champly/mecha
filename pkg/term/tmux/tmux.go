@@ -16,7 +16,7 @@ const (
 	errFmt    = `term/tmux: %s %s failed: %w: %s`
 )
 
-// Tmux is a driver.Provider backed by tmux.
+// Tmux is a driver.Backend backed by tmux.
 type Tmux struct {
 	mu         sync.Mutex
 	anchorPane string
@@ -26,11 +26,6 @@ type Tmux struct {
 // New creates a new Tmux provider.
 func New() (driver.Backend, error) {
 	return &Tmux{}, nil
-}
-
-// Name returns the driver name.
-func (t *Tmux) Name() string {
-	return "tmux"
 }
 
 // Match reports whether the current environment is tmux.
@@ -61,7 +56,7 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 		return nil, err
 	}
 
-	if cmd := driver.BuildBootstrap(spec); cmd != "" {
+	if cmd := driver.BuildCommand(spec); cmd != "" {
 		if err := sendLiteral(ctx, paneID, cmd); err != nil {
 			return nil, err
 		}
@@ -71,26 +66,7 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 	}
 
 	t.panes.Push(paneID)
-	return driver.NewID("tmux", paneID), nil
-}
-
-func (t *Tmux) Send(ctx context.Context, h driver.Handle, text string) error {
-	return sendMultiline(text,
-		func(p string) error {
-			return sendLiteral(ctx, h.PaneID(), p)
-		},
-		func() error {
-			return sendEnter(ctx, h.PaneID())
-		},
-	)
-}
-
-func (t *Tmux) Capture(ctx context.Context, h driver.Handle) (string, error) {
-	return tmux(ctx, captureArgs(false, h.PaneID())...)
-}
-
-func (t *Tmux) CaptureAll(ctx context.Context, h driver.Handle) (string, error) {
-	return tmux(ctx, captureArgs(true, h.PaneID())...)
+	return driver.NewHandle("tmux", paneID), nil
 }
 
 func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {

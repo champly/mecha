@@ -145,29 +145,6 @@ func (c *conn) sendText(sessionID, text string) error {
 	return err
 }
 
-func (c *conn) getBuffer(sessionID string, all bool) (string, error) {
-	req := &api.ClientOriginatedMessage{
-		Submessage: &api.ClientOriginatedMessage_GetBufferRequest{
-			GetBufferRequest: &api.GetBufferRequest{
-				Session: &sessionID,
-			},
-		},
-	}
-	if all {
-		// Request entire scrollback buffer.
-		req.GetGetBufferRequest().LineRange = &api.LineRange{TrailingLines: new(int32(-1))}
-	}
-	resp, err := c.call(req)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	for _, line := range resp.GetGetBufferResponse().GetContents() {
-		b.WriteString(line.GetText())
-	}
-	return b.String(), nil
-}
-
 func (c *conn) closeSessions(sessionIDs ...string) error {
 	_, err := c.call(&api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_CloseRequest{

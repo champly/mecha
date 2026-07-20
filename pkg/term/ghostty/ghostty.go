@@ -14,10 +14,9 @@ import (
 const (
 	prefix = "ghostty"
 	app    = "Ghostty"
-	enter  = `	send key "enter" to targetTerminal`
 )
 
-// Ghostty is a driver.Provider backed by Ghostty via AppleScript.
+// Ghostty is a driver.Backend backed by Ghostty via AppleScript.
 type Ghostty struct {
 	mu        sync.Mutex
 	windowID  string
@@ -29,11 +28,6 @@ func New() (driver.Backend, error) {
 	return &Ghostty{}, nil
 }
 
-// Name returns the driver name.
-func (g *Ghostty) Name() string {
-	return "ghostty"
-}
-
 // Match reports whether the current environment is Ghostty.
 func Match() bool {
 	return strings.Contains(strings.ToLower(os.Getenv("TERM_PROGRAM")), "ghostty")
@@ -43,7 +37,7 @@ func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, e
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	cmd := driver.BuildBootstrap(spec)
+	cmd := driver.BuildCommand(spec)
 
 	if g.windowID == "" || g.terminals.Empty() {
 		out, err := runAppleScript(ctx, firstSpawnScript(cmd))
@@ -56,7 +50,7 @@ func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, e
 		}
 		g.windowID = winID
 		g.terminals.Push(termID)
-		return driver.NewID(prefix, termID), nil
+		return driver.NewHandle(prefix, termID), nil
 	}
 
 	out, err := runAppleScript(ctx, splitSpawnScript(g.windowID, g.terminals.Last(), cmd))
@@ -68,24 +62,7 @@ func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, e
 		return nil, fmt.Errorf("term/ghostty: empty terminal id after split")
 	}
 	g.terminals.Push(termID)
-	return driver.NewID(prefix, termID), nil
-}
-
-func (g *Ghostty) Send(ctx context.Context, h driver.Handle, text string) error {
-	script := textScript(h.PaneID(), text)
-	if script == "" {
-		return nil
-	}
-	_, err := runAppleScript(ctx, script)
-	return err
-}
-
-func (g *Ghostty) Capture(ctx context.Context, h driver.Handle) (string, error) {
-	return captureTemp(ctx, h.PaneID(), "write_screen_file:copy")
-}
-
-func (g *Ghostty) CaptureAll(ctx context.Context, h driver.Handle) (string, error) {
-	return captureTemp(ctx, h.PaneID(), "write_scrollback_file:copy")
+	return driver.NewHandle(prefix, termID), nil
 }
 
 func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {

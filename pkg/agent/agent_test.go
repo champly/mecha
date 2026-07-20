@@ -19,8 +19,8 @@ func TestRenderPrompt_Coordinator(t *testing.T) {
 		{Name: "implementer", Prompt: "负责写代码。"},
 	}
 
-	runtime := config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
-	content := renderPrompt("/Users/me/myproject", runtime, role, allRoles)
+	runtime := config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
+	content := RenderPrompt("/Users/me/myproject", runtime, role, allRoles)
 
 	if !strings.Contains(content, "<your_assigned_role>") {
 		t.Errorf("missing <your_assigned_role>")
@@ -51,8 +51,8 @@ func TestRenderPrompt_Specialist(t *testing.T) {
 		Prompt: "你是一个代码审查者。",
 	}
 
-	runtime := config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
-	content := renderPrompt("/Users/me/myproject", runtime, role, nil)
+	runtime := config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
+	content := RenderPrompt("/Users/me/myproject", runtime, role, nil)
 
 	if !strings.Contains(content, "<your_assigned_role>") {
 		t.Errorf("missing <your_assigned_role>")

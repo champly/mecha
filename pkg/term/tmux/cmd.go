@@ -44,15 +44,6 @@ func splitArgs(dir, target, workDir string) []string {
 	return args
 }
 
-func captureArgs(all bool, paneID string) []string {
-	args := []string{"capture-pane", "-p"}
-	if all {
-		args = append(args, "-S", "-")
-	}
-	args = append(args, "-t", paneID)
-	return args
-}
-
 func sendLiteral(ctx context.Context, paneID, text string) error {
 	if text == "" {
 		return nil
@@ -80,21 +71,4 @@ func tmux(ctx context.Context, args ...string) (string, error) {
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
-}
-
-func sendMultiline(text string, sendText func(string) error, sendEnter func() error) error {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if line != "" {
-			if err := sendText(line); err != nil {
-				return err
-			}
-		}
-		if i < len(lines)-1 {
-			if err := sendEnter(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }

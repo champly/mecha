@@ -11,6 +11,9 @@ import (
 	"github.com/champly/mecha/pkg/config"
 )
 
+// initLogger creates a logger writing to ~/.mecha/logs/<workspace>/<date>.log,
+// with the workspace path flattened ("/" → "_") for isolation. Logs must go
+// to a file because the coordinator takes over the terminal.
 func initLogger(workspace string) (*slog.Logger, *os.File, error) {
 	dir, err := config.MechaDir()
 	if err != nil {

@@ -9,9 +9,11 @@ LDFLAGS := \
 	-X github.com/champly/mecha/cmd.Version=$(VERSION) \
 	-X github.com/champly/mecha/cmd.BuildDate=$(BUILDDATE)
 
-PROTO_DIR := pkg/term/iterm2/api
-PROTO_FILE := $(PROTO_DIR)/api.proto
-PROTO_OUT := pkg/term/iterm2/api
+ITERM_PROTO_DIR  := pkg/term/iterm2/api
+ITERM_PROTO_FILE := $(ITERM_PROTO_DIR)/api.proto
+ITERM_PROTO_OUT  := pkg/term/iterm2/api
+
+API_PROTO_FILE := pkg/api/api.proto
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(GOPATH_BIN)/mecha .
@@ -23,14 +25,17 @@ run:
 	go build -ldflags "$(LDFLAGS)" -o $(GOPATH_BIN)/mecha . && $(GOPATH_BIN)/mecha
 
 proto:
-	protoc --go_out=$(PROTO_OUT) --go_opt=paths=source_relative -I $(PROTO_DIR) $(PROTO_FILE)
+	protoc --go_out=$(ITERM_PROTO_OUT) --go_opt=paths=source_relative -I $(ITERM_PROTO_DIR) $(ITERM_PROTO_FILE)
+	protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		-I . $(API_PROTO_FILE)
 
 proto-update:
-	curl -sL "https://gitlab.com/gnachman/iterm2/-/raw/master/proto/api.proto" -o $(PROTO_FILE)
+	curl -sL "https://gitlab.com/gnachman/iterm2/-/raw/master/proto/api.proto" -o $(ITERM_PROTO_FILE)
 	$(MAKE) proto
 
 test:
 	go test ./pkg/...
 
 clean:
-	rm -rf bin/ $(PROTO_OUT)/*.pb.go
+	rm -rf bin/ $(ITERM_PROTO_OUT)/*.pb.go pkg/api/*.pb.go

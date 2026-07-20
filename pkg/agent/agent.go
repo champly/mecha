@@ -12,7 +12,6 @@ import (
 	"github.com/champly/mecha/pkg/agent/gemini"
 	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
-	"github.com/google/uuid"
 )
 
 var registry = map[string]types.Factory{}
@@ -33,36 +32,26 @@ func Register(name string, factory types.Factory) {
 	registry[name] = factory
 }
 
-// New creates an Agent for the given role within the workspace.
-func New(workspace string, roleName string, cfg config.Config, runtime config.Runtime) (types.Agent, error) {
-	profile, ok := cfg.Profiles[cfg.Profile]
+// NewFromConfig creates an Agent from pre-resolved configuration.
+// Used by agentd when receiving config from Core over gRPC.
+func NewFromConfig(workspace, prompt, roleName, webhookAddr string, agentCfg config.AgentConfig, mechaBinary string) (types.Agent, error) {
+	factory, ok := registry[agentCfg.Type]
 	if !ok {
-		return nil, fmt.Errorf("agent: unknown profile %q", cfg.Profile)
-	}
-
-	var role *config.Role
-	for i := range profile.Roles {
-		if profile.Roles[i].Name == roleName {
-			role = &profile.Roles[i]
-			break
-		}
-	}
-	if role == nil {
-		return nil, fmt.Errorf("agent: role %q not found in profile %q", roleName, cfg.Profile)
-	}
-
-	factory, ok := registry[role.Agent.Type]
-	if !ok {
-		return nil, fmt.Errorf("agent: unknown agent type %q", role.Agent.Type)
+		return nil, fmt.Errorf("agent: unknown agent type %q", agentCfg.Type)
 	}
 
 	ctx := types.AgentContext{
-		Workspace: workspace,
-		RoleDir:   config.RoleDir(workspace, roleName),
-		Prompt:    renderPrompt(workspace, runtime, *role, profile.Roles),
-		AgentID:   uuid.NewString(),
+		Workspace:   workspace,
+		RoleDir:     config.RoleDir(workspace, roleName),
+		Prompt:      prompt,
+		WebhookAddr: webhookAddr,
 	}
-	return factory(ctx, role.Agent, runtime)
+
+	runtime := config.Runtime{
+		MechaBinary: mechaBinary,
+	}
+
+	return factory(ctx, agentCfg, runtime)
 }
 
 const promptTemplate = `<your_assigned_role>
@@ -77,7 +66,7 @@ IMPORTANT: You were started in this directory to receive the above role assignme
 
 <available_roles>
 You can delegate tasks by running:
-  {{.MechaBinary}} ask --port {{.WebhookPort}} <role> "<task>"
+	{{.MechaBinary}} ask --addr {{.Addr}} <role> "<task>"
 
 Available roles:
 {{range .OtherRoles -}}
@@ -89,7 +78,7 @@ Available roles:
 type promptData struct {
 	Workspace   string
 	MechaBinary string
-	WebhookPort string
+	Addr        string
 	Role        config.Role
 	OtherRoles  []config.Role
 }
@@ -103,7 +92,8 @@ var tmpl = template.Must(template.New("prompt").Funcs(template.FuncMap{
 	},
 }).Parse(promptTemplate))
 
-func renderPrompt(workspace string, runtime config.Runtime, role config.Role, allRoles []config.Role) string {
+// RenderPrompt renders the role prompt template for the given role.
+func RenderPrompt(workspace string, runtime config.Runtime, role config.Role, allRoles []config.Role) string {
 	otherRoles := make([]config.Role, 0, len(allRoles))
 	for _, r := range allRoles {
 		if r.Name != role.Name {
@@ -115,7 +105,7 @@ func renderPrompt(workspace string, runtime config.Runtime, role config.Role, al
 	if err := tmpl.Execute(&buf, promptData{
 		Workspace:   workspace,
 		MechaBinary: runtime.MechaBinary,
-		WebhookPort: runtime.WebhookPort,
+		Addr:        runtime.Addr,
 		Role:        role,
 		OtherRoles:  otherRoles,
 	}); err != nil {

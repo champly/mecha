@@ -4,7 +4,9 @@ package driver
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -12,12 +14,8 @@ import (
 // Backend is the contract that all terminal providers implement.
 type Backend interface {
 	Spawn(ctx context.Context, spec Spec) (Handle, error)
-	Send(ctx context.Context, handle Handle, text string) error
-	Capture(ctx context.Context, handle Handle) (string, error)
-	CaptureAll(ctx context.Context, handle Handle) (string, error)
 	Kill(ctx context.Context, handle Handle) error
 }
-
 
 // Spec describes how to create a new terminal pane.
 type Spec struct {
@@ -32,25 +30,28 @@ type Handle interface {
 	PaneID() string
 }
 
-var idSeq atomic.Uint64
+var (
+	idSeq          atomic.Uint64
+	shellSafeToken = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
+)
 
 type ident struct {
-	prefix   string
-	nativeID string
+	displayID string
+	nativeID  string
 }
 
 func (h ident) ID() string {
-	return h.prefix
+	return h.displayID
 }
 
 func (h ident) PaneID() string {
 	return h.nativeID
 }
 
-// NewID creates a new Handle with the given prefix and backend-native pane ID.
-func NewID(prefix, nativeID string) Handle {
+// NewHandle creates a new Handle with the given prefix and backend-native pane ID.
+func NewHandle(prefix, nativeID string) Handle {
 	n := idSeq.Add(1)
-	return ident{prefix: fmt.Sprintf("%s-%d", prefix, n), nativeID: nativeID}
+	return ident{displayID: fmt.Sprintf("%s-%d", prefix, n), nativeID: nativeID}
 }
 
 // Chain tracks spawned panes in right-side split order.
@@ -115,37 +116,13 @@ func BuildCommand(spec Spec) string {
 	return strings.Join(parts, " ")
 }
 
-// BuildBootstrap returns a shell command that cds to WorkDir before running spec's command.
-func BuildBootstrap(spec Spec) string {
-	cmd := BuildCommand(spec)
-	if cmd == "" {
-		return ""
-	}
-	if spec.WorkDir == "" {
-		return cmd
-	}
-	return "cd " + QuoteShell(spec.WorkDir) + " && exec " + cmd
-}
-
 // QuoteShell quotes s for safe use in a shell command.
 func QuoteShell(s string) string {
 	if s == "" {
-		return "''"
+		return `""`
 	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
-}
-
-// ScriptMultiline splits multiline text into script commands with enter commands between lines.
-func ScriptMultiline(text string, buildCmd func(string) string, enterCmd string) []string {
-	lines := strings.Split(text, "\n")
-	out := make([]string, 0, len(lines)*2)
-	for i, line := range lines {
-		if line != "" {
-			out = append(out, buildCmd(line))
-		}
-		if i < len(lines)-1 {
-			out = append(out, enterCmd)
-		}
+	if shellSafeToken.MatchString(s) {
+		return s
 	}
-	return out
+	return strconv.Quote(s)
 }

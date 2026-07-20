@@ -8,31 +8,22 @@ Multi-agent orchestration system. ([中文](README.zh-CN.md)) The Coordinator br
 User
  │
  ▼
-┌─────────────────────────────────────────────────────────┐
-│  Coordinator (current terminal)                       │
-│                                                         │
-│  Receive → Decompose → mecha ask <role> "<task>"        │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │          mecha (HTTP Server)                     │   │
-│  │                                                 │   │
-│  │   POST /ask  ◄────────  POST /webhook/:id       │   │
-│  │   (blocking)             (event callback)        │   │
-│  └──────┬──────────────────────▲───────────────────┘   │
-│         │ Spawn                │ Hook                   │
-│         ▼                      │                       │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
-│  │architect │  │  coder   │  │ tester   │  ...        │
-│  │ (pane)   │  │ (pane)   │  │ (pane)   │             │
-│  └──────────┘  └──────────┘  └──────────┘             │
-│                                                         │
-│  Task done → Coordinator aggregates → returns to User  │
-└─────────────────────────────────────────────────────────┘
+Coordinator (agentd, current terminal)
+ │  mecha ask --addr <ADDR> <role> "<task>"
+ ▼
+mecha Core (gRPC server, 127.0.0.1)
+ │  Spawn pane + TaskChannel (gRPC bidi stream)
+ ├──► agentd (architect pane) ── PTY ── agent CLI
+ ├──► agentd (coder pane)     ── PTY ── agent CLI
+ └──► agentd (tester pane)    ── PTY ── agent CLI
+
+Hook events: agent ──► mecha webhook ──► agentd local HTTP ──► Core state machine
 ```
 
-- **Coordinator**: Receives requirements, decomposes tasks, dispatches — never executes directly.
-- **Specialists**: Execute tasks in independent panes (architect / coder / tester / reviewer).
-- **Hook Events**: `SessionStart` (boot complete), `Stop` (task success), `StopFailure` (task failure) drive state transitions.
+- **Coordinator**: Receives requirements, decomposes tasks, dispatches via `mecha ask` — never executes directly.
+- **agentd**: One per role; manages a long-lived agent process over a PTY and talks to Core via gRPC. Coordinator and specialists run the same `agentd` binary.
+- **Specialists**: Each runs in its own terminal pane (architect / coder / tester / reviewer), so you can watch tasks execute live.
+- **Hook Events**: `SessionStart` (boot complete), `Stop` (task success), `StopFailure` (task failure) are forwarded to the role's agentd over local HTTP and drive Core's state machine.
 
 ## Quick Start
 

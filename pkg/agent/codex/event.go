@@ -14,21 +14,7 @@ var eventMap = map[string]string{
 	"StopFailure":  agenttypes.EventStopFailure,
 }
 
-// ParseHookEvent parses raw Codex Hook JSON into a unified HookEvent.
-//
-// Codex hook events share these common fields:
-//
-//	hook_event_name  string   — event name
-//	session_id       string   — session identifier
-//	transcript_path  string   — path to conversation transcript
-//	cwd              string   — current working directory
-//	model            string   — active model slug
-//
-// Event-specific fields:
-//
-//	Stop:            last_assistant_message string  — Codex's final response
-//	StopFailure:     error_type / error     string  — provider-specific failure reason
-//	SessionStart:    source                 string  — startup | resume | clear | compact
+// ParseHookEvent parses raw Codex hook JSON into a unified HookEvent.
 func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -46,9 +32,8 @@ func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 	}
 
 	e := agenttypes.HookEvent{
-		AgentID: c.agentID,
-		Event:   event,
-		Raw:     raw,
+		Event: event,
+		Raw:   raw,
 	}
 
 	if sid, ok := m["session_id"].(string); ok {

@@ -4,22 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/champly/mecha/pkg/config"
 )
 
-// AgentContext bundles the runtime environment for an agent instance:
-//   - Workspace is the project root (cmd.Dir).
-//   - RoleDir is the directory for agent-specific files (CLAUDE.md, settings.json).
-//   - Prompt is the role-specific instruction (injected via --append-system-prompt-file).
-//   - AgentID is the unique identifier for this agent instance.
+// AgentContext bundles the runtime environment for an agent instance.
 type AgentContext struct {
-	Workspace string
-	RoleDir   string
-	Prompt    string
-	AgentID   string
+	Workspace   string // project root (cmd.Dir)
+	RoleDir     string // agent-specific files (CLAUDE.md, settings.json)
+	Prompt      string // role instruction (injected via --append-system-prompt-file)
+	WebhookAddr string // agentd address to POST hook events to
 }
 
 // Factory creates an Agent from the given parameters.
@@ -30,7 +28,6 @@ type Agent interface {
 	Prepare() error
 	Cmd() *exec.Cmd
 	ParseHookEvent(raw []byte) (HookEvent, error)
-	ID() string
 }
 
 const (
@@ -41,7 +38,6 @@ const (
 )
 
 type HookEvent struct {
-	AgentID      string          `json:"agent_id"`
 	Event        string          `json:"event"`
 	SessionID    string          `json:"session_id,omitempty"`
 	Output       string          `json:"output,omitempty"`
@@ -82,4 +78,30 @@ func BuildArgs(user, defaults map[string]any) []string {
 		}
 	}
 	return args
+}
+
+// BuildEnv returns the process environment overlaid with defaults and user
+// values (later layers win), sorted for deterministic output.
+func BuildEnv(user, defaults map[string]string) []string {
+	merged := make(map[string]string, len(defaults)+len(user))
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			merged[k] = v
+		}
+	}
+	for k, v := range MergeMap(user, defaults) {
+		merged[k] = v
+	}
+
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	env := make([]string, 0, len(keys))
+	for _, k := range keys {
+		env = append(env, k+"="+merged[k])
+	}
+	return env
 }

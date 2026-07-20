@@ -27,11 +27,10 @@ var (
 type Claude struct {
 	workspace   string
 	roleDir     string
-	agentID     string
 	prompt      string
 	cfg         config.AgentConfig
 	mechaBinary string
-	webhookPort string
+	webhookAddr string
 }
 
 // New returns a Claude agent helper.
@@ -39,25 +38,17 @@ func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Run
 	return &Claude{
 		workspace:   ctx.Workspace,
 		roleDir:     ctx.RoleDir,
-		agentID:     ctx.AgentID,
 		prompt:      ctx.Prompt,
 		cfg:         cfg,
 		mechaBinary: runtime.MechaBinary,
-		webhookPort: runtime.WebhookPort,
+		webhookAddr: ctx.WebhookAddr,
 	}, nil
 }
 
-// ID returns the agent's unique identifier.
-func (c *Claude) ID() string {
-	return c.agentID
-}
-
-// claudeMdPath returns the path to the agent's CLAUDE.md file.
 func (c *Claude) claudeMdPath() string {
 	return filepath.Join(c.roleDir, "CLAUDE.md")
 }
 
-// settingsPath returns the path to the agent's settings.json file.
 func (c *Claude) settingsPath() string {
 	return filepath.Join(c.roleDir, "settings.json")
 }
@@ -98,7 +89,7 @@ func (c *Claude) writeSettings() error {
 					map[string]any{
 						"type":    "command",
 						"command": c.mechaBinary,
-						"args":    []string{"webhook", "--id", c.agentID, "--port", c.webhookPort},
+						"args":    []string{"webhook", "--addr", c.webhookAddr},
 					},
 				},
 			},
@@ -140,8 +131,6 @@ func (c *Claude) Cmd() *exec.Cmd {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = c.workspace
-	for k, v := range agenttypes.MergeMap(c.cfg.Envs, defaultEnvs) {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = agenttypes.BuildEnv(c.cfg.Envs, defaultEnvs)
 	return cmd
 }

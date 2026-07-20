@@ -20,31 +20,28 @@ func testAgentConfig() config.AgentConfig {
 }
 
 func testRuntime() config.Runtime {
-	return config.Runtime{MechaBinary: "mecha", WebhookPort: "12345"}
+	return config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
 }
 
-func testNew(workspace, roleDir, agentID, prompt string) *Claude {
+func testNew(workspace, roleDir, prompt string) *Claude {
 	ctx := agenttypes.AgentContext{
-		Workspace: workspace,
-		RoleDir:   roleDir,
-		Prompt:    prompt,
-		AgentID:   agentID,
+		Workspace:   workspace,
+		RoleDir:     roleDir,
+		Prompt:      prompt,
+		WebhookAddr: "127.0.0.1:12345",
 	}
 	a, _ := New(ctx, testAgentConfig(), testRuntime())
 	return a.(*Claude)
 }
 
 func TestNew(t *testing.T) {
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "agent-001", "test prompt")
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 
 	if c.workspace != "/ws" {
 		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
 	}
 	if c.roleDir != "/ws/.mecha/roles/lead" {
 		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
-	}
-	if c.agentID != "agent-001" {
-		t.Errorf("agentID = %q, want %q", c.agentID, "agent-001")
 	}
 	if c.prompt != "test prompt" {
 		t.Errorf("prompt = %q, want %q", c.prompt, "test prompt")
@@ -54,7 +51,7 @@ func TestNew(t *testing.T) {
 func TestWritePrompt(t *testing.T) {
 	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-001", content)
+	c := testNew(dir, filepath.Join(dir, "role"), content)
 
 	if err := c.writePrompt(); err != nil {
 		t.Fatalf("writePrompt() error: %v", err)
@@ -71,7 +68,7 @@ func TestWritePrompt(t *testing.T) {
 
 func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", "prompt")
+	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
 	if err := c.writeSettings(); err != nil {
 		t.Fatalf("writeSettings() error: %v", err)
@@ -85,8 +82,8 @@ func TestWriteSettings(t *testing.T) {
 	if !strings.Contains(string(data), c.mechaBinary) {
 		t.Errorf("settings.json missing mecha path, got: %s", data)
 	}
-	if !strings.Contains(string(data), "agent-123") {
-		t.Errorf("settings.json missing agent ID, got: %s", data)
+	if !strings.Contains(string(data), c.webhookAddr) {
+		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
 	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
 		if !strings.Contains(string(data), event) {
@@ -98,7 +95,7 @@ func TestWriteSettings(t *testing.T) {
 func TestPrepare(t *testing.T) {
 	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
 	dir := t.TempDir()
-	c := testNew(dir, filepath.Join(dir, "role"), "agent-123", prompt)
+	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 
 	if err := c.Prepare(); err != nil {
 		t.Fatalf("Prepare() error: %v", err)
@@ -115,7 +112,7 @@ func TestPrepare(t *testing.T) {
 func TestCmd(t *testing.T) {
 	dir := t.TempDir()
 	roleDir := filepath.Join(dir, "role")
-	c := testNew(dir, roleDir, "agent-001", "prompt")
+	c := testNew(dir, roleDir, "prompt")
 
 	cmd := c.Cmd()
 

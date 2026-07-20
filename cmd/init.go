@@ -9,13 +9,13 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
+	var force bool
+
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize mecha configuration",
 		Long:  "Write the default config.yaml to ~/.mecha/config.yaml.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			force, _ := cmd.Flags().GetBool("force")
-
 			path, err := config.InitConfig(force)
 			if err != nil {
 				return err
@@ -25,6 +25,6 @@ func newInitCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP("force", "f", false, "Overwrite existing config without backup")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing config without backup")
 	return cmd
 }

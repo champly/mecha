@@ -22,11 +22,10 @@ var defaultParams = map[string]any{
 type Codex struct {
 	workspace   string
 	roleDir     string
-	agentID     string
 	prompt      string
 	cfg         config.AgentConfig
 	mechaBinary string
-	webhookPort string
+	webhookAddr string
 }
 
 // New returns a Codex agent helper.
@@ -34,20 +33,13 @@ func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Run
 	return &Codex{
 		workspace:   ctx.Workspace,
 		roleDir:     ctx.RoleDir,
-		agentID:     ctx.AgentID,
 		prompt:      ctx.Prompt,
 		cfg:         cfg,
 		mechaBinary: runtime.MechaBinary,
-		webhookPort: runtime.WebhookPort,
+		webhookAddr: ctx.WebhookAddr,
 	}, nil
 }
 
-// ID returns the agent's unique identifier.
-func (c *Codex) ID() string {
-	return c.agentID
-}
-
-// agentsMdPath returns the path to the agent's AGENTS.md file.
 func (c *Codex) agentsMdPath() string {
 	return filepath.Join(c.roleDir, "AGENTS.md")
 }
@@ -85,14 +77,12 @@ func (c *Codex) Cmd() *exec.Cmd {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = c.workspace
-	for k, v := range c.cfg.Envs {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = agenttypes.BuildEnv(c.cfg.Envs, nil)
 	return cmd
 }
 
 func (c *Codex) configArgs() []string {
-	hookArgs := []string{"webhook", "--id", c.agentID, "--port", c.webhookPort}
+	hookArgs := []string{"webhook", "--addr", c.webhookAddr}
 	args := []string{
 		"--config", "model_instructions_file=" + quoteTOMLString(c.agentsMdPath()),
 	}

@@ -22,11 +22,10 @@ var defaultParams = map[string]any{
 type Gemini struct {
 	workspace   string
 	roleDir     string
-	agentID     string
 	prompt      string
 	cfg         config.AgentConfig
 	mechaBinary string
-	webhookPort string
+	webhookAddr string
 }
 
 // New returns a Gemini agent helper.
@@ -34,30 +33,21 @@ func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Run
 	return &Gemini{
 		workspace:   ctx.Workspace,
 		roleDir:     ctx.RoleDir,
-		agentID:     ctx.AgentID,
 		prompt:      ctx.Prompt,
 		cfg:         cfg,
 		mechaBinary: runtime.MechaBinary,
-		webhookPort: runtime.WebhookPort,
+		webhookAddr: ctx.WebhookAddr,
 	}, nil
 }
 
-// ID returns the agent's unique identifier.
-func (g *Gemini) ID() string {
-	return g.agentID
-}
-
-// geminiMdPath returns the path to the agent's GEMINI.md file.
 func (g *Gemini) geminiMdPath() string {
 	return filepath.Join(g.roleDir, "GEMINI.md")
 }
 
-// settingsDir returns the path to the agent's .gemini directory.
 func (g *Gemini) settingsDir() string {
 	return filepath.Join(g.roleDir, ".gemini")
 }
 
-// settingsPath returns the path to the agent's settings.json file.
 func (g *Gemini) settingsPath() string {
 	return filepath.Join(g.roleDir, ".gemini", "settings.json")
 }
@@ -87,7 +77,7 @@ func (g *Gemini) writeSettings() error {
 		return fmt.Errorf("gemini: create .gemini dir: %w", err)
 	}
 
-	webhookCmd := fmt.Sprintf("%s webhook --id %s --port %s", g.mechaBinary, g.agentID, g.webhookPort)
+	webhookCmd := fmt.Sprintf("%s webhook --addr %s", g.mechaBinary, g.webhookAddr)
 
 	settings := map[string]any{
 		"hooks": map[string]any{
@@ -144,8 +134,6 @@ func (g *Gemini) Cmd() *exec.Cmd {
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = g.roleDir
-	for k, v := range g.cfg.Envs {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = agenttypes.BuildEnv(g.cfg.Envs, nil)
 	return cmd
 }
