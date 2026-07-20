@@ -35,7 +35,9 @@ Hook events: agent ──► mecha webhook ──► agentd local HTTP ──►
 2. Go to **General** → **Magic**
 3. Enable **✓ Enable Python API**
 
-**tmux** and **Ghostty** work out of the box.
+**tmux** works out of the box.
+
+**Ghostty** requires a recent version with AppleScript support (verified on 1.3.x). On the first spawn, macOS will ask for Automation permission for Ghostty — allow it.
 
 ```bash
 # Install
@@ -52,5 +54,6 @@ mecha
 ```
 
 Config: `~/.mecha/config.yaml`
+Logs: `~/.mecha/logs/`
 
 Full design: [docs/DESIGN.md](docs/DESIGN.md)
