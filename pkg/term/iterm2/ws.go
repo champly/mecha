@@ -61,7 +61,9 @@ func dial() (*conn, error) {
 	headers.Set("x-iterm2-cookie", cookie)
 	headers.Set("x-iterm2-key", key)
 
-	ws, _, err := dialer.DialContext(context.Background(), "ws://localhost", headers)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := dialer.DialContext(ctx, "ws://localhost", headers)
 	if err != nil {
 		return nil, fmt.Errorf("iterm2: dial: %w", err)
 	}

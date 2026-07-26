@@ -77,3 +77,8 @@ func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {
 	}
 	return nil
 }
+
+// Close implements driver.Backend; Ghostty holds no resources.
+func (g *Ghostty) Close() error {
+	return nil
+}

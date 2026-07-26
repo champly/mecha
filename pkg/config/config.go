@@ -160,6 +160,14 @@ func (c Config) validate() error {
 		}
 	}
 
+	profile := strings.TrimSpace(c.Profile)
+	if profile == "" {
+		return fmt.Errorf("config: profile is required")
+	}
+	if _, ok := c.Profiles[profile]; !ok {
+		return fmt.Errorf("config: profile %q not found in profiles", profile)
+	}
+
 	for profileName, profile := range c.Profiles {
 		coordinatorCount := 0
 		for _, role := range profile.Roles {
@@ -238,11 +246,16 @@ func (c *Config) complete() {
 			if v := strings.TrimSpace(role.Agent.Model); v != "" {
 				resolved.Model = v
 			}
+			// Role-level params/envs merge over the agent-level ones
+			// (role wins per key), not wholesale replacement.
 			if role.Agent.Params != nil {
-				resolved.Params = cloneParams(role.Agent.Params)
+				maps.Copy(resolved.Params, role.Agent.Params)
 			}
 			if role.Agent.Envs != nil {
-				resolved.Envs = maps.Clone(role.Agent.Envs)
+				if resolved.Envs == nil {
+					resolved.Envs = map[string]string{}
+				}
+				maps.Copy(resolved.Envs, role.Agent.Envs)
 			}
 
 			role.Agent = resolved

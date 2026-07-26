@@ -121,6 +121,8 @@ func (c *Core) shutdown() {
 	}
 	c.logger.Info("core shutdown complete")
 
+	_ = c.backend.Close()
+
 	if c.logFile != nil {
 		_ = c.logFile.Close()
 	}

@@ -85,7 +85,7 @@ type promptData struct {
 
 var tmpl = template.Must(template.New("prompt").Funcs(template.FuncMap{
 	"firstLine": func(s string) string {
-		if idx := strings.IndexAny(s, "\n。"); idx > 0 {
+		if idx := strings.IndexAny(s, "\n。"); idx >= 0 {
 			return s[:idx]
 		}
 		return s

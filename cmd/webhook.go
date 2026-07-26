@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// hookTimeout bounds the webhook POST so a stuck agentd cannot wedge the
+// agent's hook process forever.
+const hookTimeout = 10 * time.Second
 
 func newWebhookCmd() *cobra.Command {
 	var addr string
@@ -25,7 +30,7 @@ func newWebhookCmd() *cobra.Command {
 				return fmt.Errorf("webhook: read stdin: %w", err)
 			}
 
-			resp, err := http.Post("http://"+addr+"/webhook", "application/json", bytes.NewReader(data))
+			resp, err := (&http.Client{Timeout: hookTimeout}).Post("http://"+addr+"/webhook", "application/json", bytes.NewReader(data))
 			if err != nil {
 				return fmt.Errorf("webhook: post %s: %w", addr, err)
 			}

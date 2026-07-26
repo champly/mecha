@@ -36,6 +36,7 @@ type instance struct {
 	handle      term.Handle // specialist pane; nil for the coordinator
 	stream      grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
 	resultCh    chan *api.AskResponse
+	discCh      chan struct{} // closed by detach when the stream breaks
 	streamUp    bool
 	agentUp     bool
 	registered  bool
@@ -83,6 +84,7 @@ func (inst *instance) attach(stream grpc.BidiStreamingServer[api.TaskResult, api
 	inst.mu.Lock()
 	inst.stream = stream
 	inst.resultCh = make(chan *api.AskResponse, 1)
+	inst.discCh = make(chan struct{})
 	inst.streamUp = true
 	inst.mu.Unlock()
 	inst.maybeReady()
@@ -146,26 +148,40 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 	defer inst.taskMu.Unlock()
 
 	inst.mu.Lock()
-	stream, resultCh := inst.stream, inst.resultCh
+	stream, resultCh, discCh := inst.stream, inst.resultCh, inst.discCh
 	inst.mu.Unlock()
-	if stream == nil || resultCh == nil {
+	if stream == nil || resultCh == nil || discCh == nil {
 		return nil, fmt.Errorf("core: instance %q task channel not ready", inst.id)
 	}
 
 	inst.state.Store(int32(stateBusy))
 	defer inst.state.CompareAndSwap(int32(stateBusy), int32(stateRunning))
 
-	if err := stream.Send(&api.TaskRequest{Id: uuid.NewString(), Task: task}); err != nil {
+	id := uuid.NewString()
+	if err := stream.Send(&api.TaskRequest{Id: id, Task: task}); err != nil {
 		return nil, fmt.Errorf("core: send task: %w", err)
 	}
 
-	select {
-	case result := <-resultCh:
-		return result, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(taskTimeout):
-		return nil, fmt.Errorf("core: task timeout")
+	// One timer for the whole wait: discarding stale results must not extend
+	// the deadline.
+	timer := time.NewTimer(taskTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case result := <-resultCh:
+			if result.GetId() != id {
+				// Stale result from a previous timed-out or cancelled
+				// task; keep waiting for ours.
+				continue
+			}
+			return result, nil
+		case <-discCh:
+			return nil, fmt.Errorf("core: instance %q agentd disconnected during task", inst.id)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, fmt.Errorf("core: task timeout")
+		}
 	}
 }
 
@@ -181,18 +197,22 @@ func (inst *instance) deliverResult(resp *api.AskResponse) {
 	}
 }
 
-// detach drops the stream and fails any in-flight task.
-func (inst *instance) detach() {
+// detach drops the stream, fails any in-flight task via discCh, and marks the
+// instance unhealthy so the next ask respawns it. It is a no-op when a newer
+// stream has been attached since (agentd reconnected), so a stale stream
+// teardown cannot detach its successor.
+func (inst *instance) detach(stream grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]) {
 	inst.mu.Lock()
-	resultCh := inst.resultCh
+	if inst.stream != stream {
+		inst.mu.Unlock()
+		return
+	}
+	discCh := inst.discCh
 	inst.stream = nil
 	inst.resultCh = nil
+	inst.discCh = nil
 	inst.mu.Unlock()
 
-	if resultCh != nil {
-		select {
-		case resultCh <- &api.AskResponse{Success: false, Result: "agentd disconnected"}:
-		default:
-		}
-	}
+	inst.state.Store(int32(stateUnhealthy))
+	close(discCh)
 }

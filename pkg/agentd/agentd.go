@@ -95,7 +95,6 @@ func (a *Agentd) supervise() {
 	<-a.stop
 	a.reportStatus(api.StatusExited, "")
 	a.Close()
-	close(a.hookCh)
 }
 
 // ctx returns a context with the agentd ID as gRPC metadata.
@@ -120,10 +119,17 @@ func (a *Agentd) Close() {
 	})
 }
 
-// hookLoop reads webhook events and dispatches them.
+// hookLoop reads webhook events and dispatches them until shutdown. The
+// channel is never closed, so in-flight webhook handlers can never panic on
+// a send; they unblock via the server's done channel instead.
 func (a *Agentd) hookLoop() {
-	for ev := range a.hookCh {
-		a.handleHook(ev)
+	for {
+		select {
+		case <-a.stop:
+			return
+		case ev := <-a.hookCh:
+			a.handleHook(ev)
+		}
 	}
 }
 

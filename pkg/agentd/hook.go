@@ -1,18 +1,25 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/champly/mecha/pkg/agent/types"
 )
 
 // WebhookServer receives and parses agent hook events.
 type WebhookServer struct {
-	srv     *http.Server
-	addr    string
+	srv       *http.Server
+	addr      string
+	done      chan struct{}
+	closeOnce sync.Once
+
+	mu      sync.RWMutex // guards parseFn
 	parseFn func([]byte) (types.HookEvent, error)
 	ch      chan<- types.HookEvent
 }
@@ -26,6 +33,7 @@ func NewWebhookServer(ch chan<- types.HookEvent) (*WebhookServer, error) {
 
 	w := &WebhookServer{
 		addr: ln.Addr().String(),
+		done: make(chan struct{}),
 		ch:   ch,
 	}
 
@@ -44,12 +52,21 @@ func (w *WebhookServer) Addr() string {
 
 // SetParseFunc sets the hook event parser.
 func (w *WebhookServer) SetParseFunc(fn func([]byte) (types.HookEvent, error)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.parseFn = fn
 }
 
-// Close shuts down the webhook HTTP server.
+// Close shuts down the webhook HTTP server and unblocks in-flight handlers
+// (they answer 503), so the agent's hook process never hangs. It is safe to
+// call multiple times.
 func (w *WebhookServer) Close() error {
-	return w.srv.Close()
+	w.closeOnce.Do(func() {
+		close(w.done)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return w.srv.Shutdown(ctx)
 }
 
 func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {
@@ -59,17 +76,26 @@ func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if w.parseFn == nil {
+	w.mu.RLock()
+	parseFn := w.parseFn
+	w.mu.RUnlock()
+	if parseFn == nil {
 		http.Error(wr, "agent not ready", http.StatusBadRequest)
 		return
 	}
 
-	ev, err := w.parseFn(raw)
+	ev, err := parseFn(raw)
 	if err != nil {
 		http.Error(wr, "parse hook event", http.StatusBadRequest)
 		return
 	}
 
-	w.ch <- ev
-	wr.WriteHeader(http.StatusOK)
+	// Never block forever: a full channel during shutdown must not wedge the
+	// agent's hook process.
+	select {
+	case w.ch <- ev:
+		wr.WriteHeader(http.StatusOK)
+	case <-w.done:
+		http.Error(wr, "server shutting down", http.StatusServiceUnavailable)
+	}
 }

@@ -101,3 +101,15 @@ func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
 	}
 	return nil
 }
+
+// Close closes the WebSocket connection to iTerm2, if any.
+func (p *ITerm2) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn == nil {
+		return nil
+	}
+	err := p.conn.close()
+	p.conn = nil
+	return err
+}

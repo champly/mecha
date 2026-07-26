@@ -26,14 +26,16 @@ func (a *Agentd) connectTaskChannel() error {
 	return nil
 }
 
-// taskLoop processes tasks received from Core over the stream.
+// taskLoop processes tasks received from Core over the stream. Core
+// dispatches one task at a time, so tasks are handled serially: PTY writes,
+// the single task slot, and stream sends all stay race-free.
 func (a *Agentd) taskLoop(stream grpc.BidiStreamingClient[api.TaskResult, api.TaskRequest]) {
 	for {
 		req, err := stream.Recv()
 		if err != nil {
 			return
 		}
-		go a.handleTask(stream, req)
+		a.handleTask(stream, req)
 	}
 }
 
@@ -60,6 +62,14 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 	}
 	a.hasTask = true
 	a.mu.Unlock()
+
+	// Release the task slot no matter how the wait below ends, so a later
+	// Stop hook or agent exit can never misdeliver into it.
+	defer func() {
+		a.mu.Lock()
+		a.hasTask = false
+		a.mu.Unlock()
+	}()
 
 	select {
 	case r := <-a.taskCh:

@@ -34,12 +34,25 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 		return fmt.Errorf("core: start coordinator: %w", err)
 	}
 
-	if err := inst.waitRegistered(ctx); err != nil {
+	// Never let the coordinator outlive Core: kill it when the context is
+	// cancelled, and reap it on startup failure so it is never orphaned.
+	stopKill := context.AfterFunc(ctx, func() {
+		_ = cmd.Process.Kill()
+	})
+	defer stopKill()
+
+	fail := func(err error) error {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return err
 	}
 
+	if err := inst.waitRegistered(ctx); err != nil {
+		return fail(err)
+	}
+
 	if err := inst.waitReady(ctx); err != nil {
-		return err
+		return fail(err)
 	}
 	c.logger.Info("coordinator ready", "role", roleName)
 

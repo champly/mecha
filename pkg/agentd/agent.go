@@ -144,6 +144,7 @@ func (a *Agentd) waitAgent(cmd *exec.Cmd, restore func()) {
 
 	a.mu.Lock()
 	if a.hasTask {
+		a.hasTask = false
 		a.taskCh <- taskResult{result: "agent exited during task"}
 	}
 	a.mu.Unlock()

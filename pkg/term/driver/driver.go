@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -15,6 +14,9 @@ import (
 type Backend interface {
 	Spawn(ctx context.Context, spec Spec) (Handle, error)
 	Kill(ctx context.Context, handle Handle) error
+	// Close releases resources held by the backend (e.g. the iTerm2
+	// WebSocket connection). Backends without held resources return nil.
+	Close() error
 }
 
 // Spec describes how to create a new terminal pane.
@@ -116,13 +118,15 @@ func BuildCommand(spec Spec) string {
 	return strings.Join(parts, " ")
 }
 
-// QuoteShell quotes s for safe use in a shell command.
+// QuoteShell quotes s for safe use in a shell command. Shell-safe tokens are
+// returned as-is; anything else is wrapped in single quotes — the only
+// quoting that disables every shell expansion ($, backticks, globs, ...).
 func QuoteShell(s string) string {
 	if s == "" {
-		return `""`
+		return `''`
 	}
 	if shellSafeToken.MatchString(s) {
 		return s
 	}
-	return strconv.Quote(s)
+	return `'` + strings.ReplaceAll(s, `'`, `'\''`) + `'`
 }

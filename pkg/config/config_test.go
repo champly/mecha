@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestLoadConfig(t *testing.T) {
 	cfg, err := LoadConfig("config.yaml")
@@ -49,5 +52,80 @@ func TestValidateInvalidAgentType(t *testing.T) {
 	}
 	if err.Error() != `config: unknown agent type "unknown-type"` {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateProfileRequired(t *testing.T) {
+	cfg := Config{
+		Agents: []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected error for empty profile, got nil")
+	}
+}
+
+func TestValidateProfileNotFound(t *testing.T) {
+	cfg := Config{
+		Profile: "missing",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("expected error for unknown profile, got nil")
+	}
+	if err.Error() != `config: profile "missing" not found in profiles` {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// Role-level params/envs merge over the agent-level ones (role wins per key)
+// instead of replacing them wholesale.
+func TestCompleteMergesRoleParamsAndEnvs(t *testing.T) {
+	cfg := Config{
+		Agent:   "base",
+		Profile: "p",
+		Agents: []AgentConfig{{
+			Name:   "base",
+			Type:   "claude",
+			Params: map[string]any{"a": 1, "b": 2},
+			Envs:   map[string]string{"X": "1", "Y": "2"},
+		}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{
+				Name:          "r",
+				IsCoordinator: true,
+				Agent: AgentConfig{
+					Name:   "base",
+					Params: map[string]any{"b": 20, "c": 30},
+					Envs:   map[string]string{"Y": "20", "Z": "30"},
+				},
+			}}},
+		},
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	cfg.complete()
+
+	role := cfg.Profiles["p"].Roles[0]
+	wantParams := map[string]any{"a": 1, "b": 20, "c": 30}
+	if !reflect.DeepEqual(role.Agent.Params, wantParams) {
+		t.Errorf("Params = %v, want %v", role.Agent.Params, wantParams)
+	}
+	wantEnvs := map[string]string{"X": "1", "Y": "20", "Z": "30"}
+	if !reflect.DeepEqual(role.Agent.Envs, wantEnvs) {
+		t.Errorf("Envs = %v, want %v", role.Agent.Envs, wantEnvs)
+	}
+
+	// The agent-level defaults must not be mutated by the merge.
+	wantBase := map[string]any{"a": 1, "b": 2}
+	if !reflect.DeepEqual(cfg.Agents[0].Params, wantBase) {
+		t.Errorf("base Params = %v, want %v", cfg.Agents[0].Params, wantBase)
 	}
 }

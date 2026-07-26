@@ -56,4 +56,8 @@ mecha
 Config: `~/.mecha/config.yaml`
 Logs: `~/.mecha/logs/`
 
+## Security
+
+All listeners (Core gRPC and the per-agentd webhook HTTP) bind to `127.0.0.1` only, but they carry **no authentication**: any process running as your user on the machine can call `Ask` and drive the agents (which run with `--dangerously-skip-permissions`-style flags). Treat mecha as a single-user local tool — do not run it on shared machines, and never expose the ports through a proxy or tunnel.
+
 Full design: [docs/DESIGN.md](docs/DESIGN.md)

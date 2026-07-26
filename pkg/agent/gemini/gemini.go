@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -77,7 +78,7 @@ func (g *Gemini) writeSettings() error {
 		return fmt.Errorf("gemini: create .gemini dir: %w", err)
 	}
 
-	webhookCmd := fmt.Sprintf("%s webhook --addr %s", g.mechaBinary, g.webhookAddr)
+	webhookCmd := fmt.Sprintf("%s webhook --addr %s", shellQuote(g.mechaBinary), shellQuote(g.webhookAddr))
 
 	settings := map[string]any{
 		"hooks": map[string]any{
@@ -133,7 +134,17 @@ func (g *Gemini) Cmd() *exec.Cmd {
 		binary = geminiBinary
 	}
 	cmd := exec.Command(binary, args...)
+	// Gemini discovers GEMINI.md by walking up from the working directory, so
+	// the role directory must be the CWD for the prompt file to load. The
+	// rendered prompt points the agent at the real workspace.
 	cmd.Dir = g.roleDir
 	cmd.Env = agenttypes.BuildEnv(g.cfg.Envs, nil)
 	return cmd
+}
+
+// shellQuote wraps s in single quotes for safe embedding in the shell command
+// strings Gemini uses for hook commands (a path with spaces would otherwise
+// split into separate arguments).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -56,4 +56,8 @@ mecha
 配置：`~/.mecha/config.yaml`
 日志：`~/.mecha/logs/`
 
+## 安全说明
+
+所有监听端口（Core gRPC 和各 agentd 的 webhook HTTP）都只绑定 `127.0.0.1`，但**没有任何鉴权**：本机上与你的用户同权的任意进程都可以调用 `Ask` 驱动 agent（而 agent 以 `--dangerously-skip-permissions` 之类的放行模式运行）。请把 mecha 当作单机单用户的本地工具：不要在共享机器上运行，也不要通过代理或隧道把端口暴露出去。
+
 详细设计：[docs/DESIGN.md](docs/DESIGN.md)

@@ -30,6 +30,11 @@ func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*
 		return nil, fmt.Errorf("unknown role %q", inst.role)
 	}
 
+	agentCfg, err := api.AgentConfigFromNative(role.Agent)
+	if err != nil {
+		return nil, fmt.Errorf("role %q: %w", inst.role, err)
+	}
+
 	return &api.RegisterResponse{
 		Workspace: s.core.workspace,
 		Prompt: agent.RenderPrompt(s.core.workspace, config.Runtime{
@@ -37,7 +42,7 @@ func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*
 			Addr:        s.core.addr,
 		}, role, s.core.profileRoles()),
 		RoleName:    inst.role,
-		Agent:       api.AgentConfigFromNative(role.Agent),
+		Agent:       agentCfg,
 		MechaBinary: s.core.mechaBinary,
 	}, nil
 }
@@ -82,7 +87,7 @@ func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult
 	}
 
 	inst.attach(stream)
-	defer inst.detach()
+	defer inst.detach(stream)
 
 	for {
 		result, err := stream.Recv()

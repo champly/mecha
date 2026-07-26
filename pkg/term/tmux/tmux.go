@@ -70,11 +70,16 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 }
 
 func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if _, err := tmux(ctx, "kill-pane", "-t", h.PaneID()); err != nil {
 		return err
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.panes.Remove(h.PaneID())
+	return nil
+}
+
+// Close implements driver.Backend; tmux holds no resources.
+func (t *Tmux) Close() error {
 	return nil
 }

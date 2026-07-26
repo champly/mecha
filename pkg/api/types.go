@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -35,20 +36,23 @@ const (
 )
 
 // AgentConfigFromNative converts config.AgentConfig to the proto type.
-func AgentConfigFromNative(cfg config.AgentConfig) *AgentConfig {
+func AgentConfigFromNative(cfg config.AgentConfig) (*AgentConfig, error) {
+	params, err := paramsToStruct(cfg.Params)
+	if err != nil {
+		return nil, fmt.Errorf("api: agent params: %w", err)
+	}
 	return &AgentConfig{
 		Type:   cfg.Type,
 		Binary: cfg.Binary,
 		Model:  cfg.Model,
-		Params: paramsToStruct(cfg.Params),
+		Params: params,
 		Envs:   cfg.Envs,
-	}
+	}, nil
 }
 
-func paramsToStruct(m map[string]any) *structpb.Struct {
+func paramsToStruct(m map[string]any) (*structpb.Struct, error) {
 	if len(m) == 0 {
-		return nil
+		return nil, nil
 	}
-	s, _ := structpb.NewStruct(m)
-	return s
+	return structpb.NewStruct(m)
 }

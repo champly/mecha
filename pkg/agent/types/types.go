@@ -58,7 +58,10 @@ func MergeMap[M ~map[K]V, K comparable, V any](user, defaults M) M {
 
 // BuildArgs merges user params over defaults, then returns them as CLI
 // --key value arguments with keys sorted for deterministic output.
-// Bool(true) values produce --key without a value.
+// Bool(true) values produce a bare --key flag; bool(false) values are
+// omitted entirely, so a default true can be overridden with false
+// (a "--key false" pair would leave the flag set and leak "false" as a
+// positional argument on pflag-style CLIs).
 func BuildArgs(user, defaults map[string]any) []string {
 	params := MergeMap(user, defaults)
 
@@ -71,11 +74,13 @@ func BuildArgs(user, defaults map[string]any) []string {
 	args := make([]string, 0, len(keys)*2)
 	for _, k := range keys {
 		v := params[k]
-		if b, ok := v.(bool); ok && b {
-			args = append(args, "--"+k)
-		} else {
-			args = append(args, "--"+k, fmt.Sprint(v))
+		if b, ok := v.(bool); ok {
+			if b {
+				args = append(args, "--"+k)
+			}
+			continue
 		}
+		args = append(args, "--"+k, fmt.Sprint(v))
 	}
 	return args
 }
