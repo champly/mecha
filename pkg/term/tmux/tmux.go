@@ -23,9 +23,13 @@ type Tmux struct {
 	panes      driver.Chain
 }
 
-// New creates a new Tmux provider.
+// New creates a new Tmux provider. The anchor pane is pinned to the pane
+// this process runs in (TMUX_PANE, i.e. the coordinator's pane), so spawned
+// panes stay in the coordinator's window even when the user has switched to
+// another window before the first Spawn. When TMUX_PANE is empty, Spawn
+// falls back to resolving the current pane lazily.
 func New() (driver.Backend, error) {
-	return &Tmux{}, nil
+	return &Tmux{anchorPane: os.Getenv("TMUX_PANE")}, nil
 }
 
 // Match reports whether the current environment is tmux.

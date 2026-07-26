@@ -26,22 +26,44 @@ func quoteAppleScript(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
+// firstSpawnScript splits the focused terminal of the front window and
+// returns the new terminal's id.
 func firstSpawnScript(cmdLine string) string {
 	return wrapAppleScript(app, fmt.Sprintf(`
 			set w to front window
 			set srcTerminal to focused terminal of selected tab of w
 			set newTerminal to split srcTerminal direction right%s
-			return (id of w) & "|" & (id of newTerminal)
+			return id of newTerminal
 		`, initialInput(cmdLine, "newTerminal")))
 }
 
-func splitSpawnScript(windowID, targetID, cmdLine string) string {
+// anchorScript returns the id of the front window's focused terminal,
+// captured at process start to pin where panes are spawned.
+func anchorScript() string {
+	return wrapAppleScript(app, `
+			set w to front window
+			return id of focused terminal of selected tab of w
+		`)
+}
+
+// anchorSpawnScript splits the pinned terminal, addressed globally by id so
+// it resolves even when it is not in the window's selected tab. Returns the
+// new terminal's id.
+func anchorSpawnScript(targetID, cmdLine string) string {
 	return wrapAppleScript(app, fmt.Sprintf(`
-			set w to window id %s
-			set targetTerminal to terminal id %s of selected tab of w
+			set targetTerminal to terminal id %s
+			set newTerminal to split targetTerminal direction right%s
+			return id of newTerminal
+		`, quoteAppleScript(targetID), initialInput(cmdLine, "newTerminal")))
+}
+
+// splitSpawnScript splits an existing terminal, addressed globally by id.
+func splitSpawnScript(targetID, cmdLine string) string {
+	return wrapAppleScript(app, fmt.Sprintf(`
+			set targetTerminal to terminal id %s
 			set newTerminal to split targetTerminal direction down%s
 			return id of newTerminal
-		`, quoteAppleScript(windowID), quoteAppleScript(targetID), initialInput(cmdLine, "newTerminal")))
+		`, quoteAppleScript(targetID), initialInput(cmdLine, "newTerminal")))
 }
 
 func initialInput(cmdLine, varName string) string {
@@ -58,17 +80,4 @@ func closeScript(terminalID string) string {
 			set targetTerminal to terminal id %s
 			close targetTerminal
 		`, quoteAppleScript(terminalID)))
-}
-
-func parseSpawnResult(out string) (string, string, error) {
-	parts := strings.SplitN(strings.TrimSpace(out), "|", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("term/ghostty: unexpected spawn result %q", strings.TrimSpace(out))
-	}
-	winID := strings.TrimSpace(parts[0])
-	termID := strings.TrimSpace(parts[1])
-	if winID == "" || termID == "" {
-		return "", "", fmt.Errorf("term/ghostty: empty spawn result %q", strings.TrimSpace(out))
-	}
-	return winID, termID, nil
 }

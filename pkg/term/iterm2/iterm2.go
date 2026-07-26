@@ -18,17 +18,33 @@ const activeSession = "active"
 type ITerm2 struct {
 	mu       sync.Mutex
 	conn     *conn
+	anchor   string
 	sessions driver.Chain
 }
 
 // New creates a new ITerm2 provider. It dials the iTerm2 WebSocket
-// immediately rather than lazily on first use.
+// immediately rather than lazily on first use. The anchor session is pinned
+// to the session this process runs in (ITERM_SESSION_ID, i.e. the
+// coordinator's session), so spawned panes stay in the coordinator's tab
+// even when the user has focused another tab or window before the first
+// Spawn. When ITERM_SESSION_ID is unavailable, Spawn falls back to the
+// active session.
 func New() (driver.Backend, error) {
 	c, err := dial()
 	if err != nil {
 		return nil, err
 	}
-	return &ITerm2{conn: c}, nil
+	return &ITerm2{conn: c, anchor: ownSession()}, nil
+}
+
+// ownSession returns the id of the iTerm2 session this process runs in,
+// parsed from ITERM_SESSION_ID ("w0t0p0:GUID"). Empty when unavailable.
+func ownSession() string {
+	id := os.Getenv("ITERM_SESSION_ID")
+	if i := strings.LastIndex(id, ":"); i >= 0 {
+		return id[i+1:]
+	}
+	return ""
 }
 
 // Match reports whether the current environment is iTerm2.
@@ -59,8 +75,12 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	var sessionID string
 	var err error
 	if p.sessions.Empty() {
-		// First split: split the current session vertically.
-		sessionID, err = p.conn.splitSession(activeSession, true) // vertical
+		// First split: split the anchor session vertically.
+		target := p.anchor
+		if target == "" {
+			target = activeSession
+		}
+		sessionID, err = p.conn.splitSession(target, true) // vertical
 	} else {
 		// Subsequent splits: split the last session horizontally.
 		sessionID, err = p.conn.splitSession(p.sessions.Last(), false) // horizontal
