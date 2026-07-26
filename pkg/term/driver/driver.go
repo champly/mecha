@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -23,7 +22,6 @@ type Backend interface {
 type Spec struct {
 	WorkDir string
 	Command []string
-	Env     map[string]string
 }
 
 // Handle identifies a running terminal pane.
@@ -65,14 +63,6 @@ func (c *Chain) Empty() bool {
 	return len(c.ids) == 0
 }
 
-func (c *Chain) Len() int {
-	return len(c.ids)
-}
-
-func (c *Chain) Reset() {
-	c.ids = c.ids[:0]
-}
-
 func (c *Chain) Last() string {
 	if len(c.ids) == 0 {
 		return ""
@@ -95,27 +85,23 @@ func (c *Chain) Remove(id string) {
 	}
 }
 
-// BuildCommand builds a shell command line from spec.
+// BuildCommand builds a shell command line from spec. When spec.WorkDir is
+// set, the command is prefixed with `cd <dir> &&` so backends that only send
+// text into a shell (iTerm2, Ghostty) honor it; tmux also sets the pane cwd
+// directly via split-window -c.
 func BuildCommand(spec Spec) string {
 	if len(spec.Command) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(spec.Env)+len(spec.Command)+1)
-	if len(spec.Env) > 0 {
-		parts = append(parts, "env")
-		keys := make([]string, 0, len(spec.Env))
-		for k := range spec.Env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			parts = append(parts, QuoteShell(k+"="+spec.Env[k]))
-		}
-	}
+	parts := make([]string, 0, len(spec.Command))
 	for _, arg := range spec.Command {
 		parts = append(parts, QuoteShell(arg))
 	}
-	return strings.Join(parts, " ")
+	cmd := strings.Join(parts, " ")
+	if spec.WorkDir != "" {
+		cmd = "cd " + QuoteShell(spec.WorkDir) + " && " + cmd
+	}
+	return cmd
 }
 
 // QuoteShell quotes s for safe use in a shell command. Shell-safe tokens are

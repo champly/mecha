@@ -47,10 +47,7 @@ func (g *Gemini) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 		return agenttypes.HookEvent{}, fmt.Errorf("gemini: unknown hook event %q", hookEventName)
 	}
 
-	e := agenttypes.HookEvent{
-		Event: event,
-		Raw:   raw,
-	}
+	e := agenttypes.HookEvent{Event: event}
 
 	if sid, ok := m["session_id"].(string); ok {
 		e.SessionID = sid

@@ -90,7 +90,12 @@ func (c *Core) Start(ctx context.Context) error {
 	c.server = grpc.NewServer()
 	api.RegisterCoreServer(c.server, &grpcService{core: c})
 
-	go c.server.Serve(ln)
+	go func() {
+		// Serve returns only on a listener failure or after Stop/GracefulStop.
+		if err := c.server.Serve(ln); err != nil {
+			c.logger.Error("gRPC server failed", "err", err)
+		}
+	}()
 	c.logger.Info("gRPC server listening", "addr", c.addr)
 
 	return c.launchCoordinator(ctx)

@@ -15,7 +15,7 @@
 | Coordinator | 用户默认交互角色，承担入口与派活职责 |
 | Specialist | 被 Coordinator 调度的角色，处理具体任务 |
 | agentd | agent 守护进程，托管一个 agent 进程（PTY），通过 gRPC 与 Core 通信；coordinator 和 specialist 是同一个 agentd 二进制，仅启动方式与用途不同 |
-| role agent | 跑在 agentd PTY 里的 agent CLI 进程（Claude Code / Codex / Gemini） |
+| role agent | 跑在 agentd PTY 里的 agent CLI 进程（Claude Code / Codex / Gemini / CodeBuddy / Pi） |
 | role | agent 的职责定义，由 profile 中的角色配置描述 |
 | profile | 一组角色集合，启动时选择 |
 | id | agentd 实例 ID（UUID），由 Core 拉起 agentd 时分配，生命周期内不变；也是 gRPC 协议中的唯一标识 |
@@ -112,7 +112,7 @@ profiles:
 **配置解析规则：**
 - `agent` 指向默认 agent，role 可通过 `agent.name` 覆盖
 - `config.complete()` 做三件事：trim whitespace、解析 role 级别 agent 覆盖（Type/Binary/Model/Params/Envs 合并到 base agent）、写回 map
-- `config.validate()` 检查：agent name 非空且唯一、agent type 已注册、默认 agent 存在、每个 role 的 agent 可解析、每个 profile 恰好一个 Coordinator
+- `config.validate()` 检查：agent name 非空且唯一、agent type 已注册、默认 agent 存在、role name 非空且 profile 内唯一、每个 role 的 agent 可解析、每个 profile 恰好一个 Coordinator
 - 默认配置通过 `//go:embed config.yaml` 嵌入二进制，`mecha init` 写出到 `~/.mecha/config.yaml`（已存在时备份为 `.bak`，`-f` 直接覆盖）
 
 ### 3.1 配置结构体
@@ -176,7 +176,7 @@ mecha run（裸 `mecha` 等同 `mecha run`）
   ├── config.LoadConfig("")            # ~/.mecha/config.yaml
   ├── core.New(workspace, cfg)
   │   ├── term.New()                   # 自动检测终端 (tmux > iTerm2 > Ghostty)
-  │   ├── initLogger()                 # ~/.mecha/logs/<路径下划线分隔>/YYYY-MM-DD.log
+  │   ├── config.NewFileLogger()       # ~/.mecha/logs/<路径下划线分隔>/YYYY-MM-DD.log
   │   └── resolveMechaBinary()         # os.Executable()，ldflags 覆盖优先
   └── c.Start(ctx)
       ├── 1. 绑定 TCP listener (127.0.0.1:0)
@@ -425,7 +425,7 @@ message TaskResult    { string id = 1; bool success = 2; string result = 3; }
 
 | 路由 | 调用方 | 请求 | 响应 |
 |---|---|---|---|
-| `POST /webhook` | mecha webhook CLI | 原始 hook JSON（stdin 透传） | 200 OK / 400 |
+| `POST /webhook` | mecha webhook CLI | 原始 hook JSON（stdin 透传） | 200 OK / 400 / 405 |
 
 监听 `127.0.0.1:0`，仅本机可达；agent 不感知 Core 地址。
 
@@ -445,12 +445,11 @@ Agent 触发 hook (SessionStart / Stop / StopFailure)
 
 ```go
 type HookEvent struct {
-    Event        string          `json:"event"`
-    SessionID    string          `json:"session_id,omitempty"`
-    Output       string          `json:"output,omitempty"`
-    OutputSource string          `json:"output_source,omitempty"`
-    Error        string          `json:"error,omitempty"`
-    Raw          json.RawMessage `json:"raw,omitempty"`
+    Event        string `json:"event"`
+    SessionID    string `json:"session_id,omitempty"`
+    Output       string `json:"output,omitempty"`
+    OutputSource string `json:"output_source,omitempty"`
+    Error        string `json:"error,omitempty"`
 }
 ```
 
@@ -462,12 +461,13 @@ type HookEvent struct {
 type Backend interface {
     Spawn(ctx context.Context, spec Spec) (Handle, error)
     Kill(ctx context.Context, handle Handle) error
+    // Close 释放后端持有的资源（如 iTerm2 的 WebSocket 连接）
+    Close() error
 }
 
 type Spec struct {
     WorkDir string
     Command []string
-    Env     map[string]string
 }
 
 type Handle interface {
@@ -486,7 +486,7 @@ type Handle interface {
 
 - **后端选择优先级：** tmux → iTerm2 → Ghostty，取第一个匹配环境的
 - **Pane 分割策略：** 第一个 Spawn 垂直分割（右侧），后续水平分割（下方）；backend 内部用 `driver.Chain` 维护 pane 顺序
-- **引导命令：** `driver.BuildCommand(Spec)` 用 shell 安全引号拼接（含 `env KEY=V` 前缀）
+- **引导命令：** `driver.BuildCommand(Spec)` 用 shell 安全引号拼接；`WorkDir` 非空时前置 `cd <dir> &&`（tmux 另经 `split-window -c` 直接设置 pane cwd）
 - **Ghostty 注意：** 使用 AppleScript `split` 命令（返回值即新 terminal，不存在计数竞态）；不要用 `perform action "new_split:*"` + `count of terminals` 反查（异步竞态会拿到旧终端）
 - **iTerm2 前提：** 需开启 Preferences → General → Magic → Enable Python API（WebSocket + AppleScript cookie 认证）
 
@@ -522,7 +522,7 @@ type Agent interface {
 type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
 ```
 
-不同 agent 类型通过 `registry` map 注册（`agent.go init()` 注册 `"claude"` / `"codex"` / `"gemini"`）。agentd 用 `agent.NewFromConfig` 按 Register 响应中的配置构造 agent。
+不同 agent 类型通过 `registry` map 注册（`agent.go init()` 注册 `"claude"` / `"codebuddy"` / `"codex"` / `"gemini"` / `"pi"`）。agentd 用 `agent.NewFromConfig` 按 Register 响应中的配置构造 agent。
 
 **环境变量构建（`BuildEnv`）：** agent 进程环境 = 当前进程环境（`os.Environ()`）+ `defaultEnvs` + 用户配置 `envs`，后层覆盖前层，按键排序输出。继承进程环境保证 `TERM`/`COLORTERM`（TUI 彩色输出）、`HOME`、`PATH`、API key 等正常传递。
 
@@ -572,6 +572,7 @@ pkg/
   config/
     config.go                    # Config/Role/AgentConfig/Runtime 结构体，
                                  # LoadConfig/InitConfig，validate/complete/findAgent，
+                                 # NewFileLogger（~/.mecha/logs/<workspace>/<date>.log），
                                  # MechaBinary（ldflags 可覆盖）
     config.yaml                  # 嵌入的默认配置 (//go:embed)
 
@@ -583,9 +584,11 @@ pkg/
     claude/
       claude.go                  # Claude struct、New/Prepare/Cmd
       event.go                   # ParseHookEvent、eventMap
+    codebuddy/                   # 同构（CODEBUDDY.md + --settings 注入）
     codex/                       # 同构（AGENTS.md + --config 注入）
     gemini/                      # 同构（GEMINI.md + .gemini/settings.json，
                                  # AfterAgent → Stop 映射）
+    pi/                          # 同构（PI.md + .pi/settings.json）
 
   agentd/
     agentd.go                    # Agentd struct、Start/supervise/hookLoop/Close
@@ -602,7 +605,6 @@ pkg/
     instance.go                  # instance 状态机、attach/detach、execute、等待信号
     registry.go                  # registry：id/role 双索引，内部加锁
     server.go                    # grpcService：api.CoreServer 实现，RPC → registry/instance
-    logger.go                    # initLogger：~/.mecha/logs/<workspace>/<date>.log
 
   term/
     term.go                      # Backend/Spec/Handle 类型别名、New() 工厂、匹配优先级

@@ -12,6 +12,9 @@ import (
 	"github.com/champly/mecha/pkg/agent/types"
 )
 
+// maxHookBody limits the hook event payload read into memory.
+const maxHookBody = 1 << 20 // 1 MiB
+
 // WebhookServer receives and parses agent hook events.
 type WebhookServer struct {
 	srv       *http.Server
@@ -70,7 +73,12 @@ func (w *WebhookServer) Close() error {
 }
 
 func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(r.Body)
+	if r.Method != http.MethodPost {
+		http.Error(wr, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	raw, err := io.ReadAll(http.MaxBytesReader(wr, r.Body, maxHookBody))
 	if err != nil {
 		http.Error(wr, "read body", http.StatusBadRequest)
 		return

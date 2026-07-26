@@ -192,8 +192,14 @@ func (inst *instance) deliverResult(resp *api.AskResponse) {
 	inst.mu.Unlock()
 
 	if resultCh != nil {
-		// Serialized tasks guarantee the channel never overflows.
-		resultCh <- resp
+		// Never block: when no execute is waiting (its task timed out or was
+		// cancelled), a late result would otherwise wedge the TaskChannel
+		// handler once the buffer fills. Dropping is safe — execute discards
+		// stale results by ID anyway.
+		select {
+		case resultCh <- resp:
+		default:
+		}
 	}
 }
 

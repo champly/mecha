@@ -14,6 +14,9 @@ import (
 // agent's hook process forever.
 const hookTimeout = 10 * time.Second
 
+// maxErrorBody limits how much of the server error response is read into memory.
+const maxErrorBody = 1 << 20 // 1 MiB
+
 func newWebhookCmd() *cobra.Command {
 	var addr string
 

@@ -98,7 +98,7 @@ func (a *Agentd) Start() error {
 // supervise waits for the agent to exit and performs orderly shutdown.
 func (a *Agentd) supervise() {
 	<-a.stop
-	a.reportStatus(api.StatusExited, "")
+	a.reportStatus(api.StatusExited)
 	a.Close()
 }
 
@@ -145,7 +145,7 @@ func (a *Agentd) hookLoop() {
 func (a *Agentd) handleHook(ev types.HookEvent) {
 	switch ev.Event {
 	case types.EventSessionStart:
-		a.reportStatus(api.StatusStarted, "")
+		a.reportStatus(api.StatusStarted)
 
 	case types.EventStop:
 		a.mu.Lock()
@@ -181,10 +181,9 @@ func (a *Agentd) initLogging() {
 }
 
 // reportStatus calls ReportStatus RPC.
-func (a *Agentd) reportStatus(status, msg string) {
+func (a *Agentd) reportStatus(status string) {
 	_, _ = a.client.ReportStatus(a.ctx(), &api.StatusRequest{
 		Id:     a.opts.ID,
 		Status: status,
-		Msg:    msg,
 	})
 }

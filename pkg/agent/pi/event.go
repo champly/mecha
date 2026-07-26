@@ -33,17 +33,13 @@ func (p *Pi) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 		return agenttypes.HookEvent{}, fmt.Errorf("pi: unknown hook event %q", hookEventName)
 	}
 
-	e := agenttypes.HookEvent{
-		Event: event,
-		Raw:   raw,
-	}
+	e := agenttypes.HookEvent{Event: event}
 
 	if sid, ok := m["session_id"].(string); ok {
 		e.SessionID = sid
 	}
 
-	// Pi's Stop event may carry last_assistant_message (Claude Code compat) or
-	// tool_response (Pi-native); check both.
+	// Pi's Stop event carries last_assistant_message (Claude Code compat).
 	switch event {
 	case agenttypes.EventStop:
 		if msg, ok := m["last_assistant_message"].(string); ok {

@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -38,12 +37,11 @@ const (
 )
 
 type HookEvent struct {
-	Event        string          `json:"event"`
-	SessionID    string          `json:"session_id,omitempty"`
-	Output       string          `json:"output,omitempty"`
-	OutputSource string          `json:"output_source,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	Raw          json.RawMessage `json:"raw,omitempty"`
+	Event        string `json:"event"`
+	SessionID    string `json:"session_id,omitempty"`
+	Output       string `json:"output,omitempty"`
+	OutputSource string `json:"output_source,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // MergeMap returns a new map with defaults overridden by user values.

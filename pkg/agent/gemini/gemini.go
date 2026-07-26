@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
+	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const geminiBinary = "gemini"
@@ -78,7 +78,7 @@ func (g *Gemini) writeSettings() error {
 		return fmt.Errorf("gemini: create .gemini dir: %w", err)
 	}
 
-	webhookCmd := fmt.Sprintf("%s webhook --addr %s", shellQuote(g.mechaBinary), shellQuote(g.webhookAddr))
+	webhookCmd := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(g.mechaBinary), driver.QuoteShell(g.webhookAddr))
 
 	settings := map[string]any{
 		"hooks": map[string]any{
@@ -140,11 +140,4 @@ func (g *Gemini) Cmd() *exec.Cmd {
 	cmd.Dir = g.roleDir
 	cmd.Env = agenttypes.BuildEnv(g.cfg.Envs, nil)
 	return cmd
-}
-
-// shellQuote wraps s in single quotes for safe embedding in the shell command
-// strings Gemini uses for hook commands (a path with spaces would otherwise
-// split into separate arguments).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

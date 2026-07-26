@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/champly/mecha/pkg/api"
 	"google.golang.org/grpc/metadata"
@@ -94,5 +95,29 @@ func TestDetachForeignStreamIsNoop(t *testing.T) {
 	}
 	if got := inst.state.Load(); got == int32(stateUnhealthy) {
 		t.Error("stale detach marked the instance unhealthy")
+	}
+}
+
+// Late results arriving when no execute is waiting (timed-out or cancelled
+// tasks) must be dropped rather than block the TaskChannel handler once the
+// buffer fills.
+func TestDeliverResultNeverBlocks(t *testing.T) {
+	inst := newInstance("inst-1", "coder")
+	stream := &fakeTaskStream{sent: make(chan *api.TaskRequest, 1)}
+	inst.attach(stream)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// One more than the buffer holds, with no execute draining.
+		for i := 0; i < 3; i++ {
+			inst.deliverResult(&api.AskResponse{Id: "late", Success: true})
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deliverResult blocked with no execute waiting")
 	}
 }

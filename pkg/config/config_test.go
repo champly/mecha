@@ -88,6 +88,45 @@ func TestValidateProfileNotFound(t *testing.T) {
 	}
 }
 
+func TestValidateDuplicateRoleName(t *testing.T) {
+	cfg := Config{
+		Profile: "p1",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{
+				{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}},
+				{Name: "r", Agent: AgentConfig{Name: "a"}},
+			}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("expected error for duplicate role name, got nil")
+	}
+	if err.Error() != `config: duplicate role name "r" in profile "p1"` {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateEmptyRoleName(t *testing.T) {
+	cfg := Config{
+		Profile: "p1",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{
+				{Name: " ", IsCoordinator: true, Agent: AgentConfig{Name: "a"}},
+			}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("expected error for empty role name, got nil")
+	}
+	if err.Error() != `config: profile "p1" has a role with empty name` {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // Role-level params/envs merge over the agent-level ones (role wins per key)
 // instead of replacing them wholesale.
 func TestCompleteMergesRoleParamsAndEnvs(t *testing.T) {

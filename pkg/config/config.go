@@ -218,10 +218,20 @@ func (c Config) validate() error {
 
 	for profileName, profile := range c.Profiles {
 		coordinatorCount := 0
+		roleNames := make(map[string]struct{}, len(profile.Roles))
 		for _, role := range profile.Roles {
 			if role.IsCoordinator {
 				coordinatorCount++
 			}
+
+			roleName := strings.TrimSpace(role.Name)
+			if roleName == "" {
+				return fmt.Errorf("config: profile %q has a role with empty name", profileName)
+			}
+			if _, exists := roleNames[roleName]; exists {
+				return fmt.Errorf("config: duplicate role name %q in profile %q", roleName, profileName)
+			}
+			roleNames[roleName] = struct{}{}
 
 			name := strings.TrimSpace(role.Agent.Name)
 			if name == "" {

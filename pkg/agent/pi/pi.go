@@ -12,10 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
+	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const piBinary = "pi"
@@ -88,7 +88,7 @@ func (p *Pi) writeSettings() error {
 
 	// Pi's hook command is a single shell command string (unlike Claude Code's
 	// separate command+args array). Use shell quoting for paths with spaces.
-	webhookCmd := fmt.Sprintf("%s webhook --addr %s", shellQuote(p.mechaBinary), shellQuote(p.webhookAddr))
+	webhookCmd := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(p.mechaBinary), driver.QuoteShell(p.webhookAddr))
 
 	settings := map[string]any{
 		"hooks": map[string]any{
@@ -154,11 +154,4 @@ func (p *Pi) Cmd() *exec.Cmd {
 	cmd.Dir = p.roleDir
 	cmd.Env = agenttypes.BuildEnv(p.cfg.Envs, defaultEnvs)
 	return cmd
-}
-
-// shellQuote wraps s in single quotes for safe embedding in shell command
-// strings. Pi executes hook commands via shell, so paths with spaces must
-// be quoted to avoid splitting into separate arguments.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
