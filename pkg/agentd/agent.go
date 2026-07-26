@@ -84,23 +84,13 @@ const (
 	readyTimeout     = 30 * time.Second
 )
 
-// watchReady closes a.ready once the agent's TUI finishes its initial render
-// and its input handler is confirmed active.
-//
-// Phase 1 waits for the initial render to complete (output quiet for
-// readyQuietPeriod). Passive timing alone cannot distinguish "TUI waiting for
-// input" from "TUI paused between initialization steps" — a quiet window
-// during init would close ready too early, and tasks written before the input
-// handler is ready land as text in the input box but the enter key is ignored.
-//
-// Phase 2 eliminates that ambiguity by actively probing: it sends a carriage
-// return and verifies the agent produces output in response. A TUI with a
-// live input handler will react to the keystroke (cursor move, prompt
-// refresh, bell); a TUI still initializing will silently consume it.
+// watchReady closes a.ready once the agent's TUI finishes its initial render.
+// Tasks written before the TUI input handler is ready land as text in the
+// input box but the enter key is ignored. To reduce false positives the quiet
+// window is followed by a fixed grace period before readiness is declared.
 func (a *Agentd) watchReady() {
 	defer close(a.ready)
 
-	// Phase 1: wait for the initial TUI render to quiet down.
 	deadline := time.Now().Add(readyTimeout)
 	quiet := false
 	for time.Now().Before(deadline) {
@@ -116,48 +106,17 @@ func (a *Agentd) watchReady() {
 		}
 	}
 	if !quiet {
-		slog.Warn("agent readiness quiet period timed out; tasks will be written anyway", "id", a.opts.ID)
+		slog.Warn("agent readiness wait timed out; tasks will be written anyway", "id", a.opts.ID)
 		return
 	}
 
-	// Phase 2: actively probe the TUI input handler. Each probe sends a
-	// carriage return and waits for the agent to react. Output after the
-	// probe confirms the input handler processed the keystroke.
-	const maxProbes = 5
-	for range maxProbes {
-		select {
-		case <-a.stop:
-			return
-		default:
-		}
-
-		before := a.lastOutput.Load()
-
-		a.mu.Lock()
-		if a.ptmx == nil {
-			a.mu.Unlock()
-			return
-		}
-		_, err := io.WriteString(a.ptmx, "\r")
-		a.mu.Unlock()
-		if err != nil {
-			slog.Warn("agent readiness probe write failed", "id", a.opts.ID, "err", err)
-			return
-		}
-
-		// Wait briefly for the agent to process the keystroke and render.
-		select {
-		case <-a.stop:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-
-		if a.lastOutput.Load() > before {
-			return // input handler confirmed alive
-		}
+	// After the TUI output goes quiet, wait a fixed grace period to reduce
+	// the chance of closing ready during a brief pause between initialization
+	// steps that haven't produced output yet.
+	select {
+	case <-a.stop:
+	case <-time.After(500 * time.Millisecond):
 	}
-
-	slog.Warn("agent readiness probes produced no reaction; tasks will be written anyway", "id", a.opts.ID)
 }
 
 // launchPTY starts cmd with a PTY and returns the PTY master.

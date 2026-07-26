@@ -47,10 +47,11 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		return nil, fmt.Errorf("core: term backend: %w", err)
 	}
 
-	logger, logFile, err := initLogger(workspace)
+	logger, logFile, err := config.NewFileLogger(workspace)
 	if err != nil {
 		return nil, err
 	}
+	slog.SetDefault(logger)
 
 	return &Core{
 		cfg:         cfg,

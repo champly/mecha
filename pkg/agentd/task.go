@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/champly/mecha/pkg/api"
 	"google.golang.org/grpc"
@@ -55,9 +56,30 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent not running"})
 		return
 	}
-	if _, err := io.WriteString(a.ptmx, req.Task+"\r"); err != nil {
+	// Write the task text first, then the enter key after a short delay.
+	// Writing both in one string can cause the \r to arrive before the
+	// TUI event loop has processed the preceding text, especially for
+	// long tasks — the text lands in the input box but the enter key is
+	// consumed before the submit handler is primed.
+	if _, err := io.WriteString(a.ptmx, req.Task); err != nil {
 		a.mu.Unlock()
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "write to pty: " + err.Error()})
+		return
+	}
+	a.mu.Unlock()
+
+	// Give the TUI time to ingest the text before sending the enter key.
+	time.Sleep(100 * time.Millisecond)
+
+	a.mu.Lock()
+	if a.ptmx == nil {
+		a.mu.Unlock()
+		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent exited before enter key"})
+		return
+	}
+	if _, err := io.WriteString(a.ptmx, "\r"); err != nil {
+		a.mu.Unlock()
+		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "write enter to pty: " + err.Error()})
 		return
 	}
 	a.hasTask = true

@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/api"
+	"github.com/champly/mecha/pkg/config"
 )
 
 // Options configures an agentd instance.
@@ -28,10 +30,11 @@ type Agentd struct {
 	webhook *WebhookServer
 	hookCh  chan types.HookEvent
 
-	ptmx   *os.File
-	taskCh chan taskResult
-	stop   chan struct{}
-	ready  chan struct{}
+	ptmx    *os.File
+	taskCh  chan taskResult
+	stop    chan struct{}
+	ready   chan struct{}
+	logFile *os.File
 
 	mu         sync.Mutex // guards ptmx and hasTask
 	hasTask    bool
@@ -52,6 +55,8 @@ func New(opts Options) *Agentd {
 
 // Start starts the webhook server, connects to Core via gRPC, registers, and launches the agent.
 func (a *Agentd) Start() error {
+	a.initLogging()
+
 	wh, err := NewWebhookServer(a.hookCh)
 	if err != nil {
 		return fmt.Errorf("agentd: %w", err)
@@ -116,6 +121,9 @@ func (a *Agentd) Close() {
 		if a.webhook != nil {
 			a.webhook.Close()
 		}
+		if a.logFile != nil {
+			a.logFile.Close()
+		}
 	})
 }
 
@@ -155,6 +163,21 @@ func (a *Agentd) handleHook(ev types.HookEvent) {
 		}
 		a.mu.Unlock()
 	}
+}
+
+// initLogging opens the same log file as core and sets it as the default slog
+// handler. Failures are silent — slog stays on stderr.
+func (a *Agentd) initLogging() {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	logger, f, err := config.NewFileLogger(wd)
+	if err != nil {
+		return
+	}
+	a.logFile = f
+	slog.SetDefault(logger)
 }
 
 // reportStatus calls ReportStatus RPC.

@@ -1,8 +1,12 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -127,5 +131,30 @@ func TestCompleteMergesRoleParamsAndEnvs(t *testing.T) {
 	wantBase := map[string]any{"a": 1, "b": 2}
 	if !reflect.DeepEqual(cfg.Agents[0].Params, wantBase) {
 		t.Errorf("base Params = %v, want %v", cfg.Agents[0].Params, wantBase)
+	}
+}
+
+func TestNewFileLogger(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	logger, f, err := NewFileLogger("/Users/test/project")
+	if err != nil {
+		t.Fatalf("NewFileLogger() error: %v", err)
+	}
+	defer f.Close()
+
+	wantPath := filepath.Join(home, ".mecha", "logs", "Users_test_project", time.Now().Format(time.DateOnly)+".log")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("log file %q not created: %v", wantPath, err)
+	}
+
+	logger.Info("hello", "key", "value")
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	if !strings.Contains(string(data), `hello`) || !strings.Contains(string(data), `key=value`) {
+		t.Errorf("log file missing expected content, got: %s", data)
 	}
 }

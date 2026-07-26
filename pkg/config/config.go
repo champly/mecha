@@ -4,10 +4,12 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,6 +53,52 @@ func MechaDir() (string, error) {
 		return "", fmt.Errorf("config: cannot determine user home directory: %w", err)
 	}
 	return filepath.Join(home, configDirName), nil
+}
+
+// LogPath returns the log file path for a workspace, matching the convention
+// used by both core and agentd so all process logs land in the same file.
+func LogPath(workspace string) (string, error) {
+	dir, err := MechaDir()
+	if err != nil {
+		return "", err
+	}
+
+	name := strings.TrimLeft(workspace, "/")
+	name = strings.ReplaceAll(name, "/", "_")
+	logDir := filepath.Join(dir, "logs", name)
+
+	return filepath.Join(logDir, time.Now().Format(time.DateOnly)+".log"), nil
+}
+
+// NewFileLogger opens the log file for workspace and returns a configured
+// slog.Logger that writes structured text logs to it. Both core and agentd
+// use this so all process logs land in the same file.
+func NewFileLogger(workspace string) (*slog.Logger, *os.File, error) {
+	path, err := LogPath(workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, nil, fmt.Errorf("config: create log dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("config: open log file: %w", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{
+		AddSource: true,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.SourceKey {
+				if src, ok := a.Value.Any().(*slog.Source); ok {
+					src.File = filepath.Base(src.File)
+				}
+			}
+			return a
+		},
+	}))
+
+	return logger, f, nil
 }
 
 // DefaultConfigPath returns the default config file path (~/.mecha/config.yaml).
