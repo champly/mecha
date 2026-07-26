@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/champly/mecha/pkg/config"
 	"github.com/champly/mecha/pkg/core"
@@ -32,7 +33,7 @@ func runMecha() error {
 		return fmt.Errorf("get workspace: %w", err)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	c, err := core.New(workspace, cfg)

@@ -149,7 +149,10 @@ func (a *Agentd) waitAgent(cmd *exec.Cmd, restore func()) {
 	}
 	a.mu.Unlock()
 
+	a.mu.Lock()
 	a.ptmx.Close()
+	a.ptmx = nil
+	a.mu.Unlock()
 	close(a.stop)
 }
 
@@ -164,11 +167,17 @@ func (a *Agentd) watchWinch() {
 		case <-a.stop:
 			return
 		case <-sigCh:
+			a.mu.Lock()
+			ptmx := a.ptmx
+			a.mu.Unlock()
+			if ptmx == nil {
+				return
+			}
 			sz, err := pty.GetsizeFull(os.Stdin)
 			if err != nil {
 				continue
 			}
-			pty.Setsize(a.ptmx, sz)
+			pty.Setsize(ptmx, sz)
 		}
 	}
 }

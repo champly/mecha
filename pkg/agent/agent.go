@@ -8,8 +8,10 @@ import (
 	"text/template"
 
 	"github.com/champly/mecha/pkg/agent/claude"
+	"github.com/champly/mecha/pkg/agent/codebuddy"
 	"github.com/champly/mecha/pkg/agent/codex"
 	"github.com/champly/mecha/pkg/agent/gemini"
+	"github.com/champly/mecha/pkg/agent/pi"
 	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
 )
@@ -18,8 +20,10 @@ var registry = map[string]types.Factory{}
 
 func init() {
 	Register("claude", claude.New)
+	Register("codebuddy", codebuddy.New)
 	Register("codex", codex.New)
 	Register("gemini", gemini.New)
+	Register("pi", pi.New)
 
 	config.ValidateAgentType = func(typ string) bool {
 		_, ok := registry[typ]
