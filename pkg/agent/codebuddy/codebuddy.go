@@ -10,6 +10,7 @@ import (
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
+	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const codebuddyBinary = "codebuddy"
@@ -77,6 +78,12 @@ func (c *CodeBuddy) writeSettings() error {
 		return fmt.Errorf("codebuddy: create role dir: %w", err)
 	}
 
+	// CodeBuddy command hooks only support a single shell-form `command`
+	// string (run via $SHELL / Git Bash); there is no `args` exec form like
+	// Claude Code, so the full command line must be one quoted string.
+	// Reference: https://www.codebuddy.ai/docs/cli/hooks
+	command := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(c.mechaBinary), driver.QuoteShell(c.webhookAddr))
+
 	hookEvents := map[string]any{}
 	for _, event := range []string{
 		agenttypes.EventSessionStart,
@@ -88,8 +95,7 @@ func (c *CodeBuddy) writeSettings() error {
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",
-						"command": c.mechaBinary,
-						"args":    []string{"webhook", "--addr", c.webhookAddr},
+						"command": command,
 					},
 				},
 			},

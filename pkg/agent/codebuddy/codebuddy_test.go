@@ -1,6 +1,7 @@
 package codebuddy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
+	"github.com/champly/mecha/pkg/term/driver"
 )
 
 func testAgentConfig() config.AgentConfig {
@@ -82,8 +84,28 @@ func TestWriteSettings(t *testing.T) {
 	if !strings.Contains(string(data), c.mechaBinary) {
 		t.Errorf("settings.json missing mecha path, got: %s", data)
 	}
+	if !strings.Contains(string(data), "webhook --addr") {
+		t.Errorf("settings.json missing webhook command, got: %s", data)
+	}
 	if !strings.Contains(string(data), c.webhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
+	}
+	// CodeBuddy command hooks have no exec-form `args` field; the command
+	// must be a single shell string.
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("settings.json is not valid JSON: %v", err)
+	}
+	hooks := decoded["hooks"].(map[string]any)
+	for name, event := range hooks {
+		hook := event.([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+		if _, ok := hook["args"]; ok {
+			t.Errorf("hook %q has unsupported args field: %v", name, hook)
+		}
+		cmd, ok := hook["command"].(string)
+		if !ok || !strings.Contains(cmd, c.mechaBinary) || !strings.Contains(cmd, "webhook --addr "+driver.QuoteShell(c.webhookAddr)) {
+			t.Errorf("hook %q command = %q, want shell string with mecha webhook", name, cmd)
+		}
 	}
 	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
 		if !strings.Contains(string(data), event) {
@@ -150,16 +172,45 @@ func TestParseHookEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("Stop", func(t *testing.T) {
-		ev, err := c.ParseHookEvent([]byte(`{"hook_event_name":"Stop","last_assistant_message":"done!"}`))
+	t.Run("Stop with last_assistant_message", func(t *testing.T) {
+		payload := `{"session_id":"df88915a-be69-47ef-83c1-d8a31b33b9c8","transcript_path":"/tmp/x.jsonl","cwd":"/tmp/mecha","hook_event_name":"Stop","stop_hook_active":false,"agent_type":"cli","last_assistant_message":"当前系统时间：2026年7月28日","background_tasks":[],"session_crons":[],"permission_mode":"bypassPermissions","client":"CLI","version":"2.127.3","model":"glm"}`
+		ev, err := c.ParseHookEvent([]byte(payload))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
 		if ev.Event != agenttypes.EventStop {
 			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventStop)
 		}
-		if ev.Output != "done!" {
-			t.Errorf("output = %q, want %q", ev.Output, "done!")
+		if ev.Output != "当前系统时间：2026年7月28日" {
+			t.Errorf("output = %q, want %q", ev.Output, "当前系统时间：2026年7月28日")
+		}
+		if ev.OutputSource != "last_assistant_message" {
+			t.Errorf("output_source = %q, want %q", ev.OutputSource, "last_assistant_message")
+		}
+	})
+
+	t.Run("Stop without last_assistant_message", func(t *testing.T) {
+		// [118;1:3uField absent → Output stays empty (no transcript fallback).
+		ev, err := c.ParseHookEvent([]byte(`{"hook_event_name":"Stop","stop_hook_active":false,"transcript_path":"/tmp/x.jsonl"}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if ev.Output != "" {
+			t.Errorf("output = %q, want empty", ev.Output)
+		}
+		if ev.OutputSource != "" {
+			t.Errorf("output_source = %q, want empty", ev.OutputSource)
+		}
+	})
+
+	t.Run("Stop with empty last_assistant_message", func(t *testing.T) {
+		// Field present but empty string → treat as no output.
+		ev, err := c.ParseHookEvent([]byte(`{"hook_event_name":"Stop","last_assistant_message":""}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if ev.Output != "" {
+			t.Errorf("output = %q, want empty", ev.Output)
 		}
 	})
 
