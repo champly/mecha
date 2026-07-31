@@ -56,7 +56,7 @@ func TestNew(t *testing.T) {
 			t.Logf("pane %d killed: %s", i+1, h.ID())
 			time.Sleep(50 * time.Millisecond)
 		}
-		if err := waitPaneCount(ctx, initial); err != nil {
+		if err := waitPaneCountAtMost(ctx, initial); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -94,13 +94,23 @@ func paneCount(ctx context.Context) (int, error) {
 }
 
 func waitPaneCount(ctx context.Context, want int) error {
+	return waitPaneCountUntil(ctx, fmt.Sprintf("at least %d panes", want), func(n int) bool { return n >= want })
+}
+
+// waitPaneCountAtMost waits until the pane count drops to at most want
+// (kill direction; a >= check would pass while panes were still alive).
+func waitPaneCountAtMost(ctx context.Context, want int) error {
+	return waitPaneCountUntil(ctx, fmt.Sprintf("at most %d panes", want), func(n int) bool { return n <= want })
+}
+
+func waitPaneCountUntil(ctx context.Context, desc string, ok func(int) bool) error {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		n, err := paneCount(ctx)
 		if err != nil {
 			return err
 		}
-		if n >= want {
+		if ok(n) {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -109,5 +119,5 @@ func waitPaneCount(ctx context.Context, want int) error {
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("expected at least %d panes, got %d", want, n)
+	return fmt.Errorf("expected %s, got %d", desc, n)
 }

@@ -243,6 +243,12 @@ func (c Config) validate() error {
 			if _, ok := agentNames[name]; !ok {
 				return fmt.Errorf("config: role %q in profile %q references unknown agent %q", role.Name, profileName, name)
 			}
+
+			if ValidateAgentType != nil {
+				if typ := strings.TrimSpace(role.Agent.Type); typ != "" && !ValidateAgentType(typ) {
+					return fmt.Errorf("config: role %q in profile %q: unknown agent type %q", role.Name, profileName, typ)
+				}
+			}
 		}
 
 		if coordinatorCount == 0 {

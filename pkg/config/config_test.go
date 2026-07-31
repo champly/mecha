@@ -127,6 +127,34 @@ func TestValidateEmptyRoleName(t *testing.T) {
 	}
 }
 
+func TestValidateRoleLevelAgentTypeOverride(t *testing.T) {
+	saved := ValidateAgentType
+	t.Cleanup(func() { ValidateAgentType = saved })
+
+	ValidateAgentType = func(typ string) bool {
+		return typ == "claude" || typ == "codex"
+	}
+
+	cfg := Config{
+		Profile: "p1",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{{
+				Name:          "r",
+				IsCoordinator: true,
+				Agent:         AgentConfig{Name: "a", Type: "unknown-type"},
+			}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("expected error for role-level unknown agent type, got nil")
+	}
+	if err.Error() != `config: role "r" in profile "p1": unknown agent type "unknown-type"` {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // Role-level params/envs merge over the agent-level ones (role wins per key)
 // instead of replacing them wholesale.
 func TestCompleteMergesRoleParamsAndEnvs(t *testing.T) {

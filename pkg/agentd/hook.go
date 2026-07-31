@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +16,16 @@ import (
 
 // maxHookBody limits the hook event payload read into memory.
 const maxHookBody = 1 << 20 // 1 MiB
+
+const maxLoggedBody = 512
+
+func truncateBody(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	if len(s) > maxLoggedBody {
+		s = s[:maxLoggedBody] + "..."
+	}
+	return s
+}
 
 // WebhookServer receives and parses agent hook events.
 type WebhookServer struct {
@@ -94,6 +106,7 @@ func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {
 
 	ev, err := parseFn(raw)
 	if err != nil {
+		slog.Warn("webhook: parse hook event", "err", err, "body", truncateBody(raw))
 		http.Error(wr, "parse hook event", http.StatusBadRequest)
 		return
 	}

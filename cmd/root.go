@@ -6,6 +6,8 @@ func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "mecha",
 		Short: "Single-process multi-role orchestrator",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		// `mecha` without subcommand is equivalent to `mecha run`.
 		RunE: func(c *cobra.Command, args []string) error {
 			return runMecha()

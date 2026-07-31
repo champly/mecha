@@ -3,7 +3,9 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +42,51 @@ func TestWebhookServerHandle(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("event not delivered")
+	}
+}
+
+func TestWebhookServerHandleParseFailure(t *testing.T) {
+	ch := make(chan types.HookEvent, 1)
+	srv, err := NewWebhookServer(ch)
+	if err != nil {
+		t.Fatalf("NewWebhookServer: %v", err)
+	}
+	defer srv.Close()
+
+	srv.SetParseFunc(func(raw []byte) (types.HookEvent, error) {
+		return types.HookEvent{}, fmt.Errorf("unexpected field %q", "hook_event_name")
+	})
+
+	resp, err := http.Post("http://"+srv.Addr()+"/webhook", "application/json",
+		bytes.NewBufferString(`{"hook_event_name":"Stop"}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("event %+v delivered despite parse failure", ev)
+	default:
+	}
+}
+
+func TestTruncateBody(t *testing.T) {
+	long := strings.Repeat("x", maxLoggedBody+100)
+	got := truncateBody([]byte(long))
+	if len(got) != maxLoggedBody+len("...") {
+		t.Errorf("truncateBody length = %d, want %d", len(got), maxLoggedBody+len("..."))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("truncateBody = %q, want suffix ...", got)
+	}
+
+	short := "  hello  "
+	if got := truncateBody([]byte(short)); got != "hello" {
+		t.Errorf("truncateBody(%q) = %q, want %q", short, got, "hello")
 	}
 }
 

@@ -22,7 +22,10 @@ func wrapAppleScript(app, body string) string {
 end tell`, app, body)
 }
 
+// quoteAppleScript quotes s as an AppleScript string literal. Backslash
+// must be escaped first: AppleScript silently drops an unescaped one.
 func quoteAppleScript(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
