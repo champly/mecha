@@ -17,12 +17,15 @@ type Backend interface {
 	// Close releases resources held by the backend (e.g. the iTerm2
 	// WebSocket connection). Backends without held resources return nil.
 	Close() error
+	// Label labels the pane this process runs in with text (e.g. a role name).
+	Label(text string) error
 }
 
 // Spec describes how to create a new terminal pane.
 type Spec struct {
 	WorkDir string
 	Command []string
+	Role    string
 }
 
 // Handle identifies a running terminal pane.

@@ -55,6 +55,7 @@ func (c *Core) ensureSpecialist(ctx context.Context, role string) (*instance, er
 	handle, err := c.backend.Spawn(ctx, term.Spec{
 		WorkDir: c.workspace,
 		Command: []string{c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.addr},
+		Role:    role,
 	})
 	if err != nil {
 		c.destroy(inst)

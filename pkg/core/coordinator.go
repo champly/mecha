@@ -17,6 +17,10 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 		return fmt.Errorf("core: no coordinator role found")
 	}
 
+	if err := c.backend.Label(roleName); err != nil {
+		c.logger.Warn("label coordinator pane", "role", roleName, "err", err)
+	}
+
 	inst := newInstance(uuid.NewString(), roleName)
 	c.registry.add(inst)
 

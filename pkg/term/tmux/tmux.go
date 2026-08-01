@@ -95,3 +95,8 @@ func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
 func (t *Tmux) Close() error {
 	return nil
 }
+
+// Label implements driver.Backend; tmux has no badge.
+func (t *Tmux) Label(text string) error {
+	return nil
+}

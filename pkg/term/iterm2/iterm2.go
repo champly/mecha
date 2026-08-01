@@ -3,6 +3,7 @@ package iterm2
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -65,6 +66,18 @@ func (p *ITerm2) ensureConn(ctx context.Context) error {
 	return nil
 }
 
+func badgeCommand(text string) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(text))
+	return fmt.Sprintf("printf '\\033]1337;SetBadgeFormat=%s\\007'", encoded)
+}
+
+// Label implements driver.Backend; iTerm2 shows the text as the pane badge.
+func (p *ITerm2) Label(text string) error {
+	encoded := base64.StdEncoding.EncodeToString([]byte(text))
+	fmt.Printf("\x1b]1337;SetBadgeFormat=%s\x07", encoded)
+	return nil
+}
+
 func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -91,6 +104,9 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	}
 
 	if cmd := driver.BuildCommand(spec); cmd != "" {
+		if spec.Role != "" {
+			cmd = badgeCommand(spec.Role) + " && " + cmd
+		}
 		// \n alone causes line feed without carriage return.
 		// \r\n gives the terminal both: cursor to column 0 + down one line.
 		if err := p.conn.sendText(ctx, sessionID, cmd+"\r\n"); err != nil {
