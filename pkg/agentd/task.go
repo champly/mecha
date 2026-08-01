@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/champly/mecha/pkg/api"
@@ -34,6 +35,13 @@ func (a *Agentd) taskLoop(stream grpc.BidiStreamingClient[api.TaskResult, api.Ta
 	for {
 		req, err := stream.Recv()
 		if err != nil {
+			// A broken stream means Core is gone; without this the agentd and
+			// its agent would run on as orphans (the agent keeps executing but
+			// nobody can deliver results). Exiting lets Core's respawn chain
+			// recover: a fresh Core spawns a new coordinator, and a specialist
+			// is respawned on the next ask.
+			slog.Warn("agentd: task channel closed, exiting", "id", a.opts.ID, "err", err)
+			a.signalStop()
 			return
 		}
 		a.handleTask(stream, req)
@@ -98,5 +106,11 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Success: r.success, Result: r.result})
 	case <-a.stop:
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent exited during task"})
+	case <-time.After(api.TaskTimeout):
+		// No Stop hook ever came: the agent swallowed the task. Exiting
+		// closes the stream, which makes Core fail this task and mark the
+		// instance unhealthy so the next ask spawns a fresh agentd.
+		slog.Error("agentd: task timed out, exiting so Core can respawn", "id", a.opts.ID, "task", req.Id)
+		a.signalStop()
 	}
 }

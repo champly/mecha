@@ -2,15 +2,11 @@
 package gemini
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
-	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const geminiBinary = "gemini"
@@ -21,66 +17,34 @@ var defaultParams = map[string]any{
 
 // Gemini handles the Gemini CLI agent type for a specific role.
 type Gemini struct {
-	workspace   string
-	roleDir     string
-	prompt      string
-	cfg         config.AgentConfig
-	mechaBinary string
-	webhookAddr string
+	agenttypes.Base
 }
 
 // New returns a Gemini agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Gemini{
-		workspace:   ctx.Workspace,
-		roleDir:     ctx.RoleDir,
-		prompt:      ctx.Prompt,
-		cfg:         cfg,
-		mechaBinary: runtime.MechaBinary,
-		webhookAddr: ctx.WebhookAddr,
-	}, nil
+	return &Gemini{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
 }
 
 func (g *Gemini) geminiMdPath() string {
-	return filepath.Join(g.roleDir, "GEMINI.md")
-}
-
-func (g *Gemini) settingsDir() string {
-	return filepath.Join(g.roleDir, ".gemini")
+	return filepath.Join(g.RoleDir, "GEMINI.md")
 }
 
 func (g *Gemini) settingsPath() string {
-	return filepath.Join(g.roleDir, ".gemini", "settings.json")
+	return filepath.Join(g.RoleDir, ".gemini", "settings.json")
 }
 
 // Prepare creates the full Gemini CLI role directory.
 func (g *Gemini) Prepare() error {
-	if err := g.writePrompt(); err != nil {
+	if err := g.PrepareRoleFile("GEMINI.md"); err != nil {
 		return err
 	}
-	return g.writeSettings()
+	return agenttypes.WriteJSONFile(g.settingsPath(), g.settings())
 }
 
-func (g *Gemini) writePrompt() error {
-	if err := os.MkdirAll(g.roleDir, 0o755); err != nil {
-		return fmt.Errorf("gemini: create dir %q: %w", g.roleDir, err)
-	}
+func (g *Gemini) settings() map[string]any {
+	webhookCmd := agenttypes.WebhookCommand(g.MechaBinary, g.WebhookAddr)
 
-	if err := os.WriteFile(g.geminiMdPath(), []byte(g.prompt), 0o644); err != nil {
-		return fmt.Errorf("gemini: write GEMINI.md: %w", err)
-	}
-	return nil
-}
-
-func (g *Gemini) writeSettings() error {
-	settingsDir := g.settingsDir()
-	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
-		return fmt.Errorf("gemini: create .gemini dir: %w", err)
-	}
-
-	webhookCmd := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(g.mechaBinary), driver.QuoteShell(g.webhookAddr))
-
-	settings := map[string]any{
+	return map[string]any{
 		"hooks": map[string]any{
 			agenttypes.EventSessionStart: []any{
 				map[string]any{
@@ -106,38 +70,13 @@ func (g *Gemini) writeSettings() error {
 			},
 		},
 	}
-
-	f, err := os.Create(g.settingsPath())
-	if err != nil {
-		return fmt.Errorf("gemini: create settings.json: %w", err)
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(settings); err != nil {
-		return fmt.Errorf("gemini: encode settings.json: %w", err)
-	}
-	return nil
 }
 
 // Cmd builds the *exec.Cmd for launching the Gemini CLI agent.
 func (g *Gemini) Cmd() *exec.Cmd {
-	args := []string{}
-	if g.cfg.Model != "" {
-		args = append(args, "--model", g.cfg.Model)
-	}
-	args = append(args, agenttypes.BuildArgs(g.cfg.Params, defaultParams)...)
-
-	binary := g.cfg.Binary
-	if binary == "" {
-		binary = geminiBinary
-	}
-	cmd := exec.Command(binary, args...)
+	cmd := g.NewAgentCmd(geminiBinary, defaultParams, nil)
 	// Gemini discovers GEMINI.md by walking up from the working directory, so
-	// the role directory must be the CWD for the prompt file to load. The
-	// rendered prompt points the agent at the real workspace.
-	cmd.Dir = g.roleDir
-	cmd.Env = agenttypes.BuildEnv(g.cfg.Envs, nil)
+	// the role directory must be the CWD for the prompt file to load.
+	cmd.Dir = g.RoleDir
 	return cmd
 }

@@ -2,15 +2,11 @@
 package codebuddy
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
-	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const codebuddyBinary = "codebuddy"
@@ -26,63 +22,36 @@ var (
 
 // CodeBuddy handles the CodeBuddy agent type for a specific role.
 type CodeBuddy struct {
-	workspace   string
-	roleDir     string
-	prompt      string
-	cfg         config.AgentConfig
-	mechaBinary string
-	webhookAddr string
+	agenttypes.Base
 }
 
 // New returns a CodeBuddy agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &CodeBuddy{
-		workspace:   ctx.Workspace,
-		roleDir:     ctx.RoleDir,
-		prompt:      ctx.Prompt,
-		cfg:         cfg,
-		mechaBinary: runtime.MechaBinary,
-		webhookAddr: ctx.WebhookAddr,
-	}, nil
+	return &CodeBuddy{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
 }
 
 func (c *CodeBuddy) promptPath() string {
-	return filepath.Join(c.roleDir, "CODEBUDDY.md")
+	return filepath.Join(c.RoleDir, "CODEBUDDY.md")
 }
 
 func (c *CodeBuddy) settingsPath() string {
-	return filepath.Join(c.roleDir, "settings.json")
+	return filepath.Join(c.RoleDir, "settings.json")
 }
 
 // Prepare creates the full CodeBuddy role directory.
 func (c *CodeBuddy) Prepare() error {
-	if err := c.writePrompt(); err != nil {
+	if err := c.PrepareRoleFile("CODEBUDDY.md"); err != nil {
 		return err
 	}
-	return c.writeSettings()
+	return agenttypes.WriteJSONFile(c.settingsPath(), c.settings())
 }
 
-func (c *CodeBuddy) writePrompt() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("codebuddy: create dir %q: %w", c.roleDir, err)
-	}
-
-	if err := os.WriteFile(c.promptPath(), []byte(c.prompt), 0o644); err != nil {
-		return fmt.Errorf("codebuddy: write CODEBUDDY.md: %w", err)
-	}
-	return nil
-}
-
-func (c *CodeBuddy) writeSettings() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("codebuddy: create role dir: %w", err)
-	}
-
+func (c *CodeBuddy) settings() map[string]any {
 	// CodeBuddy command hooks only support a single shell-form `command`
 	// string (run via $SHELL / Git Bash); there is no `args` exec form like
 	// Claude Code, so the full command line must be one quoted string.
 	// Reference: https://www.codebuddy.ai/docs/cli/hooks
-	command := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(c.mechaBinary), driver.QuoteShell(c.webhookAddr))
+	command := agenttypes.WebhookCommand(c.MechaBinary, c.WebhookAddr)
 
 	hookEvents := map[string]any{}
 	for _, event := range []string{
@@ -101,42 +70,15 @@ func (c *CodeBuddy) writeSettings() error {
 			},
 		}
 	}
-	settings := map[string]any{"hooks": hookEvents}
-
-	f, err := os.Create(c.settingsPath())
-	if err != nil {
-		return fmt.Errorf("codebuddy: create settings.json: %w", err)
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(settings); err != nil {
-		return fmt.Errorf("codebuddy: encode settings.json: %w", err)
-	}
-	return nil
+	return map[string]any{"hooks": hookEvents}
 }
 
 // Cmd builds the *exec.Cmd for launching the CodeBuddy agent.
 func (c *CodeBuddy) Cmd() *exec.Cmd {
-	args := []string{}
-	if c.cfg.Model != "" {
-		args = append(args, "--model", c.cfg.Model)
-	}
-
-	args = append(args, agenttypes.BuildArgs(c.cfg.Params, defaultParams)...)
-	args = append(
-		args,
-		"--append-system-prompt", c.prompt,
+	cmd := c.NewAgentCmd(codebuddyBinary, defaultParams, defaultEnvs)
+	cmd.Args = append(cmd.Args,
+		"--append-system-prompt", c.Prompt,
 		"--settings", c.settingsPath(),
 	)
-
-	binary := c.cfg.Binary
-	if binary == "" {
-		binary = codebuddyBinary
-	}
-	cmd := exec.Command(binary, args...)
-	cmd.Dir = c.workspace
-	cmd.Env = agenttypes.BuildEnv(c.cfg.Envs, defaultEnvs)
 	return cmd
 }

@@ -19,7 +19,6 @@ import (
 const (
 	registerTimeout   = 5 * time.Second
 	agentStartTimeout = 30 * time.Second
-	taskTimeout       = 30 * time.Minute
 	paneKillTimeout   = 5 * time.Second
 	serverStopTimeout = 5 * time.Second
 )

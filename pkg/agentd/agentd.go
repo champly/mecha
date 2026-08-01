@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -40,6 +41,16 @@ type Agentd struct {
 	hasTask    bool
 	lastOutput atomic.Int64 // unix nano of last agent output, for TUI readiness
 	closeOnce  sync.Once
+	stopOnce   sync.Once
+}
+
+// signalStop closes stop exactly once. It is called by the agent-exit path
+// and by taskLoop when the Core stream breaks, so a dead Core cannot orphan
+// this agentd.
+func (a *Agentd) signalStop() {
+	a.stopOnce.Do(func() {
+		close(a.stop)
+	})
 }
 
 // New creates a new Agentd instance.
@@ -49,7 +60,7 @@ func New(opts Options) *Agentd {
 		stop:   make(chan struct{}),
 		ready:  make(chan struct{}),
 		taskCh: make(chan taskResult, 1),
-		hookCh: make(chan types.HookEvent, 8),
+		hookCh: make(chan types.HookEvent, 32),
 	}
 }
 
@@ -180,10 +191,15 @@ func (a *Agentd) initLogging() {
 	slog.SetDefault(logger)
 }
 
-// reportStatus calls ReportStatus RPC.
+// reportStatus calls ReportStatus RPC with a deadline. A hung Core must not
+// block hookLoop (a full hookCh would then stall the agent's hook process).
 func (a *Agentd) reportStatus(status string) {
-	_, _ = a.client.ReportStatus(a.ctx(), &api.StatusRequest{
+	ctx, cancel := context.WithTimeout(a.ctx(), 2*time.Second)
+	defer cancel()
+	if _, err := a.client.ReportStatus(ctx, &api.StatusRequest{
 		Id:     a.opts.ID,
 		Status: status,
-	})
+	}); err != nil {
+		slog.Warn("agentd: report status", "id", a.opts.ID, "status", status, "err", err)
+	}
 }

@@ -1,9 +1,6 @@
 package pi
 
 import (
-	"encoding/json"
-	"fmt"
-
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 )
 
@@ -18,35 +15,13 @@ var eventMap = map[string]string{
 // ParseHookEvent parses raw Pi hook JSON into a unified HookEvent.
 // Pi's hook format follows the same pattern as Claude Code (hook_event_name field).
 func (p *Pi) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return agenttypes.HookEvent{}, fmt.Errorf("pi: parse hook event: %w", err)
-	}
-
-	hookEventName, ok := m["hook_event_name"].(string)
-	if !ok {
-		return agenttypes.HookEvent{}, fmt.Errorf("pi: hook_event_name missing or not a string")
-	}
-
-	event, ok := eventMap[hookEventName]
-	if !ok {
-		return agenttypes.HookEvent{}, fmt.Errorf("pi: unknown hook event %q", hookEventName)
-	}
-
-	e := agenttypes.HookEvent{Event: event}
-
-	if sid, ok := m["session_id"].(string); ok {
-		e.SessionID = sid
-	}
-
-	// Pi's Stop event carries last_assistant_message (Claude Code compat).
-	switch event {
-	case agenttypes.EventStop:
-		if msg, ok := m["last_assistant_message"].(string); ok {
-			e.Output = msg
-			e.OutputSource = "provider_field"
+	return agenttypes.ParseHook("pi", raw, eventMap, func(m map[string]any, e *agenttypes.HookEvent) {
+		switch e.Event {
+		case agenttypes.EventStop:
+			if msg, ok := m["last_assistant_message"].(string); ok && msg != "" {
+				e.Output = msg
+				e.OutputSource = "provider_field"
+			}
 		}
-	}
-
-	return e, nil
+	})
 }

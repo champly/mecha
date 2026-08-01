@@ -36,14 +36,14 @@ func testNew(workspace, roleDir, prompt string) *Gemini {
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 
-	if c.workspace != "/ws" {
-		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
+	if c.Workspace != "/ws" {
+		t.Errorf("workspace = %q, want %q", c.Workspace, "/ws")
 	}
-	if c.roleDir != "/ws/.mecha/roles/lead" {
-		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
+	if c.RoleDir != "/ws/.mecha/roles/lead" {
+		t.Errorf("roleDir = %q, want %q", c.RoleDir, "/ws/.mecha/roles/lead")
 	}
-	if c.prompt != "test prompt" {
-		t.Errorf("prompt = %q, want %q", c.prompt, "test prompt")
+	if c.Prompt != "test prompt" {
+		t.Errorf("prompt = %q, want %q", c.Prompt, "test prompt")
 	}
 }
 
@@ -52,8 +52,8 @@ func TestWritePrompt(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
-	if err := c.writePrompt(); err != nil {
-		t.Fatalf("writePrompt() error: %v", err)
+	if err := c.PrepareRoleFile("GEMINI.md"); err != nil {
+		t.Fatalf("PrepareRoleFile() error: %v", err)
 	}
 
 	data, err := os.ReadFile(c.geminiMdPath())
@@ -69,8 +69,8 @@ func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := c.writeSettings(); err != nil {
-		t.Fatalf("writeSettings() error: %v", err)
+	if err := agenttypes.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
+		t.Fatalf("WriteJSONFile() error: %v", err)
 	}
 
 	data, err := os.ReadFile(c.settingsPath())
@@ -78,10 +78,10 @@ func TestWriteSettings(t *testing.T) {
 		t.Fatalf("read settings.json: %v", err)
 	}
 
-	if !strings.Contains(string(data), c.mechaBinary) {
+	if !strings.Contains(string(data), c.MechaBinary) {
 		t.Errorf("settings.json missing mecha path, got: %s", data)
 	}
-	if !strings.Contains(string(data), c.webhookAddr) {
+	if !strings.Contains(string(data), c.WebhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
 	for _, event := range []string{agenttypes.EventSessionStart, eventAfterAgent} {
@@ -115,8 +115,8 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.roleDir {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.roleDir)
+	if cmd.Dir != c.RoleDir {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.RoleDir)
 	}
 
 	for _, env := range cmd.Env {

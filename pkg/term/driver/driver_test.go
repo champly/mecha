@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	agenttypes "github.com/champly/mecha/pkg/agent/types"
 )
 
 func TestQuoteShell(t *testing.T) {
@@ -20,7 +22,7 @@ func TestQuoteShell(t *testing.T) {
 		{"a\nb", "'a\nb'"},
 	}
 	for _, c := range cases {
-		if got := QuoteShell(c.in); got != c.want {
+		if got := agenttypes.QuoteShell(c.in); got != c.want {
 			t.Errorf("QuoteShell(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -39,7 +41,7 @@ func TestQuoteShellRoundTrip(t *testing.T) {
 		`back\slash`,
 	}
 	for _, v := range values {
-		out, err := exec.Command("sh", "-c", "printf '%s' "+QuoteShell(v)).Output()
+		out, err := exec.Command("sh", "-c", "printf '%s' "+agenttypes.QuoteShell(v)).Output()
 		if err != nil {
 			t.Fatalf("sh -c with %q: %v", v, err)
 		}

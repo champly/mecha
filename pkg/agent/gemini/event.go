@@ -1,9 +1,6 @@
 package gemini
 
 import (
-	"encoding/json"
-	"fmt"
-
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 )
 
@@ -32,34 +29,13 @@ var eventMap = map[string]string{
 //	AfterAgent:     prompt_response  string  — assistant's response text
 //	SessionStart:   source           string  — startup | resume | clear
 func (g *Gemini) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return agenttypes.HookEvent{}, fmt.Errorf("gemini: parse hook event: %w", err)
-	}
-
-	hookEventName, ok := m["hook_event_name"].(string)
-	if !ok {
-		return agenttypes.HookEvent{}, fmt.Errorf("gemini: hook_event_name missing or not a string")
-	}
-
-	event, ok := eventMap[hookEventName]
-	if !ok {
-		return agenttypes.HookEvent{}, fmt.Errorf("gemini: unknown hook event %q", hookEventName)
-	}
-
-	e := agenttypes.HookEvent{Event: event}
-
-	if sid, ok := m["session_id"].(string); ok {
-		e.SessionID = sid
-	}
-
-	switch event {
-	case agenttypes.EventStop:
-		if msg, ok := m["prompt_response"].(string); ok {
-			e.Output = msg
+	return agenttypes.ParseHook("gemini", raw, eventMap, func(m map[string]any, e *agenttypes.HookEvent) {
+		switch e.Event {
+		case agenttypes.EventStop:
+			if msg, ok := m["prompt_response"].(string); ok && msg != "" {
+				e.Output = msg
+				e.OutputSource = "provider_field"
+			}
 		}
-		e.OutputSource = "provider_field"
-	}
-
-	return e, nil
+	})
 }

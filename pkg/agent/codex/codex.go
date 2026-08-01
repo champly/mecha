@@ -2,11 +2,10 @@
 package codex
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
@@ -20,74 +19,38 @@ var defaultParams = map[string]any{
 
 // Codex handles the Codex CLI agent type for a specific role.
 type Codex struct {
-	workspace   string
-	roleDir     string
-	prompt      string
-	cfg         config.AgentConfig
-	mechaBinary string
-	webhookAddr string
+	agenttypes.Base
 }
 
 // New returns a Codex agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Codex{
-		workspace:   ctx.Workspace,
-		roleDir:     ctx.RoleDir,
-		prompt:      ctx.Prompt,
-		cfg:         cfg,
-		mechaBinary: runtime.MechaBinary,
-		webhookAddr: ctx.WebhookAddr,
-	}, nil
+	return &Codex{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
 }
 
 func (c *Codex) agentsMdPath() string {
-	return filepath.Join(c.roleDir, "AGENTS.md")
+	return filepath.Join(c.RoleDir, "AGENTS.md")
 }
 
 // Prepare creates the role-specific instructions file consumed by Codex.
 func (c *Codex) Prepare() error {
-	return c.writePrompt()
-}
-
-func (c *Codex) writePrompt() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("codex: create dir %q: %w", c.roleDir, err)
-	}
-
-	if err := os.WriteFile(c.agentsMdPath(), []byte(c.prompt), 0o644); err != nil {
-		return fmt.Errorf("codex: write AGENTS.md: %w", err)
-	}
-	return nil
+	return c.PrepareRoleFile("AGENTS.md")
 }
 
 // Cmd builds the *exec.Cmd for launching the Codex agent.
 func (c *Codex) Cmd() *exec.Cmd {
-	args := []string{}
-	if c.cfg.Model != "" {
-		args = append(args, "--model", c.cfg.Model)
-	}
-
-	args = append(args, agenttypes.BuildArgs(c.cfg.Params, defaultParams)...)
-	args = append(args, c.configArgs()...)
-	args = append(args, "--cd", c.workspace)
-
-	binary := c.cfg.Binary
-	if binary == "" {
-		binary = codexBinary
-	}
-	cmd := exec.Command(binary, args...)
-	cmd.Dir = c.workspace
-	cmd.Env = agenttypes.BuildEnv(c.cfg.Envs, nil)
+	cmd := c.NewAgentCmd(codexBinary, defaultParams, nil)
+	cmd.Args = append(cmd.Args, c.configArgs()...)
+	cmd.Args = append(cmd.Args, "--cd", c.Workspace)
 	return cmd
 }
 
 func (c *Codex) configArgs() []string {
-	hookArgs := []string{"webhook", "--addr", c.webhookAddr}
+	hookArgs := []string{"webhook", "--addr", c.WebhookAddr}
 	args := []string{
-		"--config", "model_instructions_file=" + quoteTOMLString(c.agentsMdPath()),
+		"--config", "model_instructions_file=" + strconv.Quote(c.agentsMdPath()),
 	}
 	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
-		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(c.mechaBinary, hookArgs))
+		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(c.MechaBinary, hookArgs))
 	}
 	return args
 }
@@ -95,22 +58,7 @@ func (c *Codex) configArgs() []string {
 func inlineHookConfig(command string, args []string) string {
 	quotedArgs := make([]string, len(args))
 	for i, arg := range args {
-		quotedArgs[i] = quoteTOMLString(arg)
+		quotedArgs[i] = strconv.Quote(arg)
 	}
-	return "[{hooks=[{command=" + quoteTOMLString(command) + ",args=[" + joinComma(quotedArgs) + "]}]}]"
-}
-
-func quoteTOMLString(value string) string {
-	return strconv.Quote(value)
-}
-
-func joinComma(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	joined := values[0]
-	for _, value := range values[1:] {
-		joined += "," + value
-	}
-	return joined
+	return "[{hooks=[{command=" + strconv.Quote(command) + ",args=[" + strings.Join(quotedArgs, ",") + "]}]}]"
 }

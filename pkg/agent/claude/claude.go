@@ -2,9 +2,6 @@
 package claude
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -25,58 +22,31 @@ var (
 
 // Claude handles the Claude Code agent type for a specific role.
 type Claude struct {
-	workspace   string
-	roleDir     string
-	prompt      string
-	cfg         config.AgentConfig
-	mechaBinary string
-	webhookAddr string
+	agenttypes.Base
 }
 
 // New returns a Claude agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Claude{
-		workspace:   ctx.Workspace,
-		roleDir:     ctx.RoleDir,
-		prompt:      ctx.Prompt,
-		cfg:         cfg,
-		mechaBinary: runtime.MechaBinary,
-		webhookAddr: ctx.WebhookAddr,
-	}, nil
+	return &Claude{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
 }
 
 func (c *Claude) claudeMdPath() string {
-	return filepath.Join(c.roleDir, "CLAUDE.md")
+	return filepath.Join(c.RoleDir, "CLAUDE.md")
 }
 
 func (c *Claude) settingsPath() string {
-	return filepath.Join(c.roleDir, "settings.json")
+	return filepath.Join(c.RoleDir, "settings.json")
 }
 
 // Prepare creates the full Claude Code role directory.
 func (c *Claude) Prepare() error {
-	if err := c.writePrompt(); err != nil {
+	if err := c.PrepareRoleFile("CLAUDE.md"); err != nil {
 		return err
 	}
-	return c.writeSettings()
+	return agenttypes.WriteJSONFile(c.settingsPath(), c.settings())
 }
 
-func (c *Claude) writePrompt() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("claude: create dir %q: %w", c.roleDir, err)
-	}
-
-	if err := os.WriteFile(c.claudeMdPath(), []byte(c.prompt), 0o644); err != nil {
-		return fmt.Errorf("claude: write CLAUDE.md: %w", err)
-	}
-	return nil
-}
-
-func (c *Claude) writeSettings() error {
-	if err := os.MkdirAll(c.roleDir, 0o755); err != nil {
-		return fmt.Errorf("claude: create role dir: %w", err)
-	}
-
+func (c *Claude) settings() map[string]any {
 	hookEvents := map[string]any{}
 	for _, event := range []string{
 		agenttypes.EventSessionStart,
@@ -88,49 +58,22 @@ func (c *Claude) writeSettings() error {
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",
-						"command": c.mechaBinary,
-						"args":    []string{"webhook", "--addr", c.webhookAddr},
+						"command": c.MechaBinary,
+						"args":    []string{"webhook", "--addr", c.WebhookAddr},
 					},
 				},
 			},
 		}
 	}
-	settings := map[string]any{"hooks": hookEvents}
-
-	f, err := os.Create(c.settingsPath())
-	if err != nil {
-		return fmt.Errorf("claude: create settings.json: %w", err)
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(settings); err != nil {
-		return fmt.Errorf("claude: encode settings.json: %w", err)
-	}
-	return nil
+	return map[string]any{"hooks": hookEvents}
 }
 
 // Cmd builds the *exec.Cmd for launching the Claude Code agent.
 func (c *Claude) Cmd() *exec.Cmd {
-	args := []string{}
-	if c.cfg.Model != "" {
-		args = append(args, "--model", c.cfg.Model)
-	}
-
-	args = append(args, agenttypes.BuildArgs(c.cfg.Params, defaultParams)...)
-	args = append(
-		args,
+	cmd := c.NewAgentCmd(claudeBinary, defaultParams, defaultEnvs)
+	cmd.Args = append(cmd.Args,
 		"--settings", c.settingsPath(),
 		"--append-system-prompt-file", c.claudeMdPath(),
 	)
-
-	binary := c.cfg.Binary
-	if binary == "" {
-		binary = claudeBinary
-	}
-	cmd := exec.Command(binary, args...)
-	cmd.Dir = c.workspace
-	cmd.Env = agenttypes.BuildEnv(c.cfg.Envs, defaultEnvs)
 	return cmd
 }

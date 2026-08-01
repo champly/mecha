@@ -76,11 +76,11 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, err := tmux(ctx, "kill-pane", "-t", h.PaneID()); err != nil {
-		return err
-	}
+	_, err := tmux(ctx, "kill-pane", "-t", h.PaneID())
+	// Remove the id even when the kill failed: a pane whose process already
+	// exited must not linger in the chain and break later spawns.
 	t.panes.Remove(h.PaneID())
-	return nil
+	return err
 }
 
 // Close implements driver.Backend; tmux holds no resources.

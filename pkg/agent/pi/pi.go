@@ -7,92 +7,49 @@
 package pi
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
-	"github.com/champly/mecha/pkg/term/driver"
 )
 
 const piBinary = "pi"
 
-// defaultParams is empty because Pi has no permission system to bypass.
-var defaultParams = map[string]any{}
-
-// defaultEnvs is empty; Pi inherits ANTHROPIC_API_KEY etc. from the parent
-// process and does not have a PI_CODE_MAX_OUTPUT_TOKENS-style variable.
-var defaultEnvs = map[string]string{}
-
 // Pi handles the Pi coding agent type for a specific role.
 type Pi struct {
-	workspace   string
-	roleDir     string
-	prompt      string
-	cfg         config.AgentConfig
-	mechaBinary string
-	webhookAddr string
+	agenttypes.Base
 }
 
 // New returns a Pi agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Pi{
-		workspace:   ctx.Workspace,
-		roleDir:     ctx.RoleDir,
-		prompt:      ctx.Prompt,
-		cfg:         cfg,
-		mechaBinary: runtime.MechaBinary,
-		webhookAddr: ctx.WebhookAddr,
-	}, nil
+	return &Pi{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
 }
 
 func (p *Pi) piMdPath() string {
-	return filepath.Join(p.roleDir, "PI.md")
-}
-
-func (p *Pi) piDir() string {
-	return filepath.Join(p.roleDir, ".pi")
+	return filepath.Join(p.RoleDir, "PI.md")
 }
 
 func (p *Pi) settingsPath() string {
-	return filepath.Join(p.piDir(), "settings.json")
+	return filepath.Join(p.RoleDir, ".pi", "settings.json")
 }
 
 // Prepare creates the Pi role directory with PI.md and .pi/settings.json.
 func (p *Pi) Prepare() error {
-	if err := p.writePrompt(); err != nil {
+	if err := p.PrepareRoleFile("PI.md"); err != nil {
 		return err
 	}
-	return p.writeSettings()
+	return agenttypes.WriteJSONFile(p.settingsPath(), p.settings())
 }
 
-func (p *Pi) writePrompt() error {
-	if err := os.MkdirAll(p.roleDir, 0o755); err != nil {
-		return fmt.Errorf("pi: create dir %q: %w", p.roleDir, err)
-	}
-
-	if err := os.WriteFile(p.piMdPath(), []byte(p.prompt), 0o644); err != nil {
-		return fmt.Errorf("pi: write PI.md: %w", err)
-	}
-	return nil
-}
-
-func (p *Pi) writeSettings() error {
-	piDir := p.piDir()
-	if err := os.MkdirAll(piDir, 0o755); err != nil {
-		return fmt.Errorf("pi: create .pi dir: %w", err)
-	}
-
+func (p *Pi) settings() map[string]any {
 	// Pi's hook command is a single shell command string (unlike Claude Code's
 	// separate command+args array). Use shell quoting for paths with spaces.
-	webhookCmd := fmt.Sprintf("%s webhook --addr %s", driver.QuoteShell(p.mechaBinary), driver.QuoteShell(p.webhookAddr))
+	webhookCmd := agenttypes.WebhookCommand(p.MechaBinary, p.WebhookAddr)
 
-	settings := map[string]any{
+	return map[string]any{
 		"hooks": map[string]any{
-			"SessionStart": []any{
+			agenttypes.EventSessionStart: []any{
 				map[string]any{
 					"matcher": "startup",
 					"hooks": []any{
@@ -103,7 +60,7 @@ func (p *Pi) writeSettings() error {
 					},
 				},
 			},
-			"Stop": []any{
+			agenttypes.EventStop: []any{
 				map[string]any{
 					"matcher": "*",
 					"hooks": []any{
@@ -116,19 +73,6 @@ func (p *Pi) writeSettings() error {
 			},
 		},
 	}
-
-	f, err := os.Create(p.settingsPath())
-	if err != nil {
-		return fmt.Errorf("pi: create settings.json: %w", err)
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(settings); err != nil {
-		return fmt.Errorf("pi: encode settings.json: %w", err)
-	}
-	return nil
 }
 
 // Cmd builds the *exec.Cmd for launching the Pi agent.
@@ -137,21 +81,8 @@ func (p *Pi) writeSettings() error {
 // to the role directory (like Gemini). The workspace is still accessible
 // via parent-directory traversal for AGENTS.md/CLAUDE.md context files.
 func (p *Pi) Cmd() *exec.Cmd {
-	args := []string{}
-	if p.cfg.Model != "" {
-		args = append(args, "--model", p.cfg.Model)
-	}
-
-	args = append(args, agenttypes.BuildArgs(p.cfg.Params, defaultParams)...)
-	args = append(args, "--append-system-prompt", p.prompt)
-
-	binary := p.cfg.Binary
-	if binary == "" {
-		binary = piBinary
-	}
-	cmd := exec.Command(binary, args...)
-	// Pi discovers .pi/settings.json relative to CWD.
-	cmd.Dir = p.roleDir
-	cmd.Env = agenttypes.BuildEnv(p.cfg.Envs, defaultEnvs)
+	cmd := p.NewAgentCmd(piBinary, nil, nil)
+	cmd.Args = append(cmd.Args, "--append-system-prompt", p.Prompt)
+	cmd.Dir = p.RoleDir
 	return cmd
 }

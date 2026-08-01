@@ -4,9 +4,10 @@ package driver
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync/atomic"
+
+	agenttypes "github.com/champly/mecha/pkg/agent/types"
 )
 
 // Backend is the contract that all terminal providers implement.
@@ -30,10 +31,7 @@ type Handle interface {
 	PaneID() string
 }
 
-var (
-	idSeq          atomic.Uint64
-	shellSafeToken = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
-)
+var idSeq atomic.Uint64
 
 type ident struct {
 	displayID string
@@ -95,24 +93,11 @@ func BuildCommand(spec Spec) string {
 	}
 	parts := make([]string, 0, len(spec.Command))
 	for _, arg := range spec.Command {
-		parts = append(parts, QuoteShell(arg))
+		parts = append(parts, agenttypes.QuoteShell(arg))
 	}
 	cmd := strings.Join(parts, " ")
 	if spec.WorkDir != "" {
-		cmd = "cd " + QuoteShell(spec.WorkDir) + " && " + cmd
+		cmd = "cd " + agenttypes.QuoteShell(spec.WorkDir) + " && " + cmd
 	}
 	return cmd
-}
-
-// QuoteShell quotes s for safe use in a shell command. Shell-safe tokens are
-// returned as-is; anything else is wrapped in single quotes — the only
-// quoting that disables every shell expansion ($, backticks, globs, ...).
-func QuoteShell(s string) string {
-	if s == "" {
-		return `''`
-	}
-	if shellSafeToken.MatchString(s) {
-		return s
-	}
-	return `'` + strings.ReplaceAll(s, `'`, `'\''`) + `'`
 }

@@ -89,13 +89,13 @@ func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, e
 }
 
 func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {
-	if _, err := runAppleScript(ctx, closeScript(h.PaneID())); err != nil {
-		return err
-	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	_, err := runAppleScript(ctx, closeScript(h.PaneID()))
+	// Remove the id even when the close failed: a terminal whose process
+	// already exited must not linger in the chain and break later spawns.
 	g.terminals.Remove(h.PaneID())
-	return nil
+	return err
 }
 
 // Close implements driver.Backend; Ghostty holds no resources.

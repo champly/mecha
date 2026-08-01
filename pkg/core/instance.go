@@ -99,8 +99,12 @@ func (inst *instance) markStarted() {
 	inst.state.Store(int32(stateRunning))
 }
 
-// markExited marks the agent as exited; the instance becomes unhealthy.
+// markExited marks the agent as exited, fails any in-flight task via discCh,
+// and makes the instance unhealthy. The discCh close is what unblocks execute
+// immediately; relying on the agentd's later connection close would leave the
+// task hanging until the timeout.
 func (inst *instance) markExited() {
+	inst.closeDisc()
 	inst.state.Store(int32(stateUnhealthy))
 }
 
@@ -155,7 +159,17 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 	}
 
 	inst.state.Store(int32(stateBusy))
-	defer inst.state.CompareAndSwap(int32(stateBusy), int32(stateRunning))
+	timedOut := false
+	defer func() {
+		if timedOut {
+			// The agent never answered; keep the instance unhealthy so the
+			// next ask destroys it and respawns a fresh agentd. The stuck
+			// agent would otherwise consume every subsequent timeout too.
+			inst.state.Store(int32(stateUnhealthy))
+			return
+		}
+		inst.state.CompareAndSwap(int32(stateBusy), int32(stateRunning))
+	}()
 
 	id := uuid.NewString()
 	if err := stream.Send(&api.TaskRequest{Id: id, Task: task}); err != nil {
@@ -164,7 +178,7 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 
 	// One timer for the whole wait: discarding stale results must not extend
 	// the deadline.
-	timer := time.NewTimer(taskTimeout)
+	timer := time.NewTimer(api.TaskTimeout)
 	defer timer.Stop()
 	for {
 		select {
@@ -180,6 +194,7 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-timer.C:
+			timedOut = true
 			return nil, fmt.Errorf("core: task timeout")
 		}
 	}
@@ -213,12 +228,21 @@ func (inst *instance) detach(stream grpc.BidiStreamingServer[api.TaskResult, api
 		inst.mu.Unlock()
 		return
 	}
-	discCh := inst.discCh
 	inst.stream = nil
 	inst.resultCh = nil
-	inst.discCh = nil
 	inst.mu.Unlock()
 
+	inst.closeDisc()
 	inst.state.Store(int32(stateUnhealthy))
-	close(discCh)
+}
+
+// closeDisc closes and clears discCh exactly once.
+func (inst *instance) closeDisc() {
+	inst.mu.Lock()
+	discCh := inst.discCh
+	inst.discCh = nil
+	inst.mu.Unlock()
+	if discCh != nil {
+		close(discCh)
+	}
 }

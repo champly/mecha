@@ -110,14 +110,17 @@ func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
 	}
 
 	paneID := h.PaneID()
-	if err := p.conn.closeSessions(paneID); err != nil {
-		return fmt.Errorf("iterm2: close session: %w", err)
-	}
-
+	err := p.conn.closeSessions(paneID)
+	// Remove the id even when the close failed: a pane whose process already
+	// exited refuses to close, and a stale id in the chain would break every
+	// subsequent spawn as a split target.
 	p.sessions.Remove(paneID)
 	if p.sessions.Empty() {
 		p.conn.close()
 		p.conn = nil
+	}
+	if err != nil {
+		return fmt.Errorf("iterm2: close session: %w", err)
 	}
 	return nil
 }

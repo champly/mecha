@@ -10,7 +10,6 @@ import (
 
 	agenttypes "github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
-	"github.com/champly/mecha/pkg/term/driver"
 )
 
 func testAgentConfig() config.AgentConfig {
@@ -39,14 +38,14 @@ func testNew(workspace, roleDir, prompt string) *CodeBuddy {
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 
-	if c.workspace != "/ws" {
-		t.Errorf("workspace = %q, want %q", c.workspace, "/ws")
+	if c.Workspace != "/ws" {
+		t.Errorf("workspace = %q, want %q", c.Workspace, "/ws")
 	}
-	if c.roleDir != "/ws/.mecha/roles/lead" {
-		t.Errorf("roleDir = %q, want %q", c.roleDir, "/ws/.mecha/roles/lead")
+	if c.RoleDir != "/ws/.mecha/roles/lead" {
+		t.Errorf("roleDir = %q, want %q", c.RoleDir, "/ws/.mecha/roles/lead")
 	}
-	if c.prompt != "test prompt" {
-		t.Errorf("prompt = %q, want %q", c.prompt, "test prompt")
+	if c.Prompt != "test prompt" {
+		t.Errorf("prompt = %q, want %q", c.Prompt, "test prompt")
 	}
 }
 
@@ -55,8 +54,8 @@ func TestWritePrompt(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
-	if err := c.writePrompt(); err != nil {
-		t.Fatalf("writePrompt() error: %v", err)
+	if err := c.PrepareRoleFile("CODEBUDDY.md"); err != nil {
+		t.Fatalf("PrepareRoleFile() error: %v", err)
 	}
 
 	data, err := os.ReadFile(c.promptPath())
@@ -72,8 +71,8 @@ func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := c.writeSettings(); err != nil {
-		t.Fatalf("writeSettings() error: %v", err)
+	if err := agenttypes.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
+		t.Fatalf("WriteJSONFile() error: %v", err)
 	}
 
 	data, err := os.ReadFile(c.settingsPath())
@@ -81,13 +80,13 @@ func TestWriteSettings(t *testing.T) {
 		t.Fatalf("read settings.json: %v", err)
 	}
 
-	if !strings.Contains(string(data), c.mechaBinary) {
+	if !strings.Contains(string(data), c.MechaBinary) {
 		t.Errorf("settings.json missing mecha path, got: %s", data)
 	}
 	if !strings.Contains(string(data), "webhook --addr") {
 		t.Errorf("settings.json missing webhook command, got: %s", data)
 	}
-	if !strings.Contains(string(data), c.webhookAddr) {
+	if !strings.Contains(string(data), c.WebhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
 	// CodeBuddy command hooks have no exec-form `args` field; the command
@@ -103,7 +102,7 @@ func TestWriteSettings(t *testing.T) {
 			t.Errorf("hook %q has unsupported args field: %v", name, hook)
 		}
 		cmd, ok := hook["command"].(string)
-		if !ok || !strings.Contains(cmd, c.mechaBinary) || !strings.Contains(cmd, "webhook --addr "+driver.QuoteShell(c.webhookAddr)) {
+		if !ok || !strings.Contains(cmd, c.MechaBinary) || !strings.Contains(cmd, "webhook --addr "+agenttypes.QuoteShell(c.WebhookAddr)) {
 			t.Errorf("hook %q command = %q, want shell string with mecha webhook", name, cmd)
 		}
 	}
@@ -138,8 +137,8 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.workspace {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.workspace)
+	if cmd.Dir != c.Workspace {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.Workspace)
 	}
 
 	if !slices.Contains(cmd.Args, "--settings") {
@@ -184,8 +183,8 @@ func TestParseHookEvent(t *testing.T) {
 		if ev.Output != "当前系统时间：2026年7月28日" {
 			t.Errorf("output = %q, want %q", ev.Output, "当前系统时间：2026年7月28日")
 		}
-		if ev.OutputSource != "last_assistant_message" {
-			t.Errorf("output_source = %q, want %q", ev.OutputSource, "last_assistant_message")
+		if ev.OutputSource != "provider_field" {
+			t.Errorf("output_source = %q, want %q", ev.OutputSource, "provider_field")
 		}
 	})
 

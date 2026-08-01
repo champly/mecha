@@ -167,7 +167,7 @@ func (a *Agentd) waitAgent(cmd *exec.Cmd, restore func()) {
 	a.ptmx.Close()
 	a.ptmx = nil
 	a.mu.Unlock()
-	close(a.stop)
+	a.signalStop()
 }
 
 // watchWinch forwards SIGWINCH to the PTY.
