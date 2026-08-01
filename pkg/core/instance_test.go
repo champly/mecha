@@ -52,6 +52,39 @@ func TestExecuteDiscardsStaleResult(t *testing.T) {
 	}
 }
 
+// A stale result that lands after execute's drain but before the fresh one
+// occupies the buffer; the fresh result must evict it, not be dropped. With
+// a "drop on full" delivery this hangs until the task timeout.
+func TestExecuteEvictsStaleResultFromFullBuffer(t *testing.T) {
+	inst := newInstance("inst-1", "coder")
+	stream := &fakeTaskStream{sent: make(chan *api.TaskRequest, 1)}
+	inst.attach(stream)
+
+	respCh := make(chan *api.AskResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := inst.execute(context.Background(), "do it")
+		respCh <- resp
+		errCh <- err
+	}()
+
+	req := <-stream.sent // execute has sent the task; its drain already ran
+	inst.deliverResult(&api.AskResponse{Id: "stale-" + req.Id, Success: true, Result: "old"})
+	inst.deliverResult(&api.AskResponse{Id: req.Id, Success: true, Result: "fresh"})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if resp := <-respCh; resp.GetResult() != "fresh" {
+			t.Errorf("execute returned %q, want the fresh result", resp.GetResult())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("execute hung: stale result swallowed the fresh one")
+	}
+}
+
 // A detached stream must fail the in-flight task immediately instead of
 // letting it hang until the task timeout.
 func TestDetachFailsInflightTask(t *testing.T) {

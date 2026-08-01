@@ -2,6 +2,10 @@ package cmd
 
 import "github.com/spf13/cobra"
 
+// configPath overrides the default ~/.mecha/config.yaml for commands that
+// load configuration (mecha run).
+var configPath string
+
 func NewRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "mecha",
@@ -13,6 +17,7 @@ func NewRootCmd() *cobra.Command {
 			return runMecha()
 		},
 	}
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config file (default ~/.mecha/config.yaml)")
 
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newRunCmd())

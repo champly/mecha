@@ -171,6 +171,18 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 		inst.state.CompareAndSwap(int32(stateBusy), int32(stateRunning))
 	}()
 
+	// Drain stale results from a previous timed-out or cancelled task, or the
+	// buffer could swallow this task's result below. taskMu serializes
+	// executes, so no execute is waiting on these entries.
+drain:
+	for {
+		select {
+		case <-resultCh:
+		default:
+			break drain
+		}
+	}
+
 	id := uuid.NewString()
 	if err := stream.Send(&api.TaskRequest{Id: id, Task: task}); err != nil {
 		return nil, fmt.Errorf("core: send task: %w", err)
@@ -206,11 +218,23 @@ func (inst *instance) deliverResult(resp *api.AskResponse) {
 	resultCh := inst.resultCh
 	inst.mu.Unlock()
 
-	if resultCh != nil {
-		// Never block: when no execute is waiting (its task timed out or was
-		// cancelled), a late result would otherwise wedge the TaskChannel
-		// handler once the buffer fills. Dropping is safe — execute discards
-		// stale results by ID anyway.
+	if resultCh == nil {
+		return
+	}
+	// Never block: when no execute is waiting (its task timed out or was
+	// cancelled), a late result must not wedge the TaskChannel handler once
+	// the buffer fills. Results arrive in task order (agentd handles tasks
+	// serially), so a full buffer can only hold a stale result from an older
+	// task — evict it for the fresh one, which is what execute is waiting on.
+	// Dropping the fresh result here would hang execute for the whole
+	// TaskTimeout.
+	select {
+	case resultCh <- resp:
+	default:
+		select {
+		case <-resultCh:
+		default:
+		}
 		select {
 		case resultCh <- resp:
 		default:

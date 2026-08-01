@@ -33,6 +33,8 @@ func testNew(workspace, roleDir, prompt string) *Gemini {
 	return a.(*Gemini)
 }
 
+var _ agenttypes.Agent = (*Gemini)(nil)
+
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 

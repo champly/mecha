@@ -31,9 +31,10 @@ type Core struct {
 	logFile     *os.File
 	mechaBinary string
 
-	backend  term.Backend
-	registry *registry
-	spawnMu  sync.Mutex // serializes specialist lookup and respawn
+	backend    term.Backend
+	registry   *registry
+	spawnMu    sync.Mutex // guards spawnLocks
+	spawnLocks map[string]*sync.Mutex
 
 	addr   string
 	server *grpc.Server
@@ -60,6 +61,7 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		mechaBinary: resolveMechaBinary(),
 		backend:     backend,
 		registry:    newRegistry(),
+		spawnLocks:  make(map[string]*sync.Mutex),
 	}, nil
 }
 
@@ -100,17 +102,11 @@ func (c *Core) Start(ctx context.Context) error {
 	return c.launchCoordinator(ctx)
 }
 
-// shutdown kills all specialist panes, then stops the gRPC server.
+// shutdown kills all specialist panes, then stops the gRPC server. Panes are
+// killed before GracefulStop: closing the task streams is what unblocks
+// in-flight executes, which is what lets GracefulStop return promptly.
 func (c *Core) shutdown() {
-	for _, inst := range c.registry.all() {
-		pane := inst.pane()
-		if pane == nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), paneKillTimeout)
-		_ = c.backend.Kill(ctx, pane)
-		cancel()
-	}
+	c.killAllPanes()
 
 	stopped := make(chan struct{})
 	go func() {
@@ -124,12 +120,32 @@ func (c *Core) shutdown() {
 		c.server.Stop()
 		<-stopped
 	}
+
+	// A pane spawned while the server was stopping has no live stream, so
+	// its agentd exits on its own; kill it anyway so nothing lingers.
+	c.killAllPanes()
+
 	c.logger.Info("core shutdown complete")
 
 	_ = c.backend.Close()
 
 	if c.logFile != nil {
 		_ = c.logFile.Close()
+	}
+}
+
+// killAllPanes kills every specialist pane, each bounded by paneKillTimeout.
+// Kills run serially: every backend holds its own lock for the whole Kill, so
+// concurrent calls would queue on the backend mutex anyway.
+func (c *Core) killAllPanes() {
+	for _, inst := range c.registry.all() {
+		pane := inst.pane()
+		if pane == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), paneKillTimeout)
+		_ = c.backend.Kill(ctx, pane)
+		cancel()
 	}
 }
 

@@ -3,10 +3,24 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/champly/mecha/pkg/term"
 	"github.com/google/uuid"
 )
+
+// roleLock returns the per-role spawn lock. Locks are never removed, so a
+// concurrent ask always finds the same lock for the same role.
+func (c *Core) roleLock(role string) *sync.Mutex {
+	c.spawnMu.Lock()
+	defer c.spawnMu.Unlock()
+	m, ok := c.spawnLocks[role]
+	if !ok {
+		m = &sync.Mutex{}
+		c.spawnLocks[role] = m
+	}
+	return m
+}
 
 // ensureSpecialist returns a healthy instance for role, respawning it when
 // missing or unhealthy. Unknown roles and the coordinator role are rejected.
@@ -18,9 +32,12 @@ func (c *Core) ensureSpecialist(ctx context.Context, role string) (*instance, er
 		return nil, fmt.Errorf("core: coordinator role %q does not accept tasks", role)
 	}
 
-	// Serialize lookup-destroy-respawn so concurrent asks don't spawn duplicates.
-	c.spawnMu.Lock()
-	defer c.spawnMu.Unlock()
+	// Serialize lookup-destroy-respawn per role so concurrent asks for the
+	// same role don't spawn duplicates; different roles spawn independently
+	// (a slow spawn for one role must not stall every other role's ask).
+	lock := c.roleLock(role)
+	lock.Lock()
+	defer lock.Unlock()
 
 	if inst := c.registry.getByRole(role); inst != nil {
 		if inst.state.Load() != int32(stateUnhealthy) {

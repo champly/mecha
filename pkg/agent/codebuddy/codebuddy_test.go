@@ -35,6 +35,8 @@ func testNew(workspace, roleDir, prompt string) *CodeBuddy {
 	return a.(*CodeBuddy)
 }
 
+var _ agenttypes.Agent = (*CodeBuddy)(nil)
+
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
 

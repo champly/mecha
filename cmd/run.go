@@ -23,7 +23,7 @@ func newRunCmd() *cobra.Command {
 }
 
 func runMecha() error {
-	cfg, err := config.LoadConfig("")
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

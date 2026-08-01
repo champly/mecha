@@ -127,6 +127,154 @@ func TestValidateEmptyRoleName(t *testing.T) {
 	}
 }
 
+func TestValidateAgentNameRequired(t *testing.T) {
+	cfg := Config{
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: " "}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != "config: agent name is required" {
+		t.Errorf("validate() = %v, want agent-name-required error", err)
+	}
+}
+
+func TestValidateDuplicateAgentName(t *testing.T) {
+	cfg := Config{
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}, {Name: "a", Type: "codex"}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != `config: duplicate agent name "a"` {
+		t.Errorf("validate() = %v, want duplicate-agent-name error", err)
+	}
+}
+
+func TestValidateDefaultAgentNotFound(t *testing.T) {
+	cfg := Config{
+		Agent:   "missing",
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != `config: default agent "missing" not found` {
+		t.Errorf("validate() = %v, want default-agent-not-found error", err)
+	}
+}
+
+func TestValidateRoleReferencesUnknownAgent(t *testing.T) {
+	cfg := Config{
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "ghost"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != `config: role "r" in profile "p" references unknown agent "ghost"` {
+		t.Errorf("validate() = %v, want unknown-agent-reference error", err)
+	}
+}
+
+func TestValidateCoordinatorMissing(t *testing.T) {
+	cfg := Config{
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{{Name: "r", Agent: AgentConfig{Name: "a"}}}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != `config: profile "p" must have one role with is_coordinator=true` {
+		t.Errorf("validate() = %v, want coordinator-missing error", err)
+	}
+}
+
+func TestValidateCoordinatorMultiple(t *testing.T) {
+	cfg := Config{
+		Profile: "p",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p": {Roles: []Role{
+				{Name: "r1", IsCoordinator: true, Agent: AgentConfig{Name: "a"}},
+				{Name: "r2", IsCoordinator: true, Agent: AgentConfig{Name: "a"}},
+			}},
+		},
+	}
+	err := cfg.validate()
+	if err == nil || err.Error() != `config: profile "p" has multiple coordinator roles (is_coordinator=true)` {
+		t.Errorf("validate() = %v, want multiple-coordinator error", err)
+	}
+}
+
+func TestParseConfigFileErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("file not found", func(t *testing.T) {
+		_, err := parseConfigFile(filepath.Join(dir, "nope.yaml"))
+		if err == nil || err.Error() != `config: file not found "`+filepath.Join(dir, "nope.yaml")+`"` {
+			t.Errorf("parseConfigFile() = %v, want file-not-found error", err)
+		}
+	})
+
+	t.Run("invalid yaml", func(t *testing.T) {
+		path := filepath.Join(dir, "bad.yaml")
+		if err := os.WriteFile(path, []byte("agents: [unclosed"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseConfigFile(path); err == nil {
+			t.Error("expected yaml parse error, got nil")
+		}
+	})
+}
+
+func TestInitConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path := filepath.Join(home, ".mecha", "config.yaml")
+
+	if _, err := InitConfig(false); err != nil {
+		t.Fatalf("InitConfig: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("config.yaml not created: %v", err)
+	}
+
+	// Existing file is backed up to .bak when force is false.
+	original, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte("custom"), 0o644)
+	if _, err := InitConfig(false); err != nil {
+		t.Fatalf("InitConfig backup: %v", err)
+	}
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil || string(bak) != "custom" {
+		t.Errorf("backup = %q, %v; want previous content", bak, err)
+	}
+	current, _ := os.ReadFile(path)
+	if string(current) != string(original) {
+		t.Errorf("config.yaml not restored to defaults after backup")
+	}
+
+	// force overwrites without a backup.
+	os.WriteFile(path, []byte("custom"), 0o644)
+	if _, err := InitConfig(true); err != nil {
+		t.Fatalf("InitConfig force: %v", err)
+	}
+	current, _ = os.ReadFile(path)
+	if string(current) != string(original) {
+		t.Errorf("force did not overwrite with defaults")
+	}
+}
+
 func TestValidateRoleLevelAgentTypeOverride(t *testing.T) {
 	saved := ValidateAgentType
 	t.Cleanup(func() { ValidateAgentType = saved })
