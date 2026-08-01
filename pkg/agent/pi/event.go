@@ -20,7 +20,6 @@ func (p *Pi) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 		case agenttypes.EventStop:
 			if msg, ok := m["last_assistant_message"].(string); ok && msg != "" {
 				e.Output = msg
-				e.OutputSource = "provider_field"
 			}
 		}
 	})

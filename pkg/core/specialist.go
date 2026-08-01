@@ -7,6 +7,8 @@ import (
 
 	"github.com/champly/mecha/pkg/term"
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // roleLock returns the per-role spawn lock. Locks are never removed, so a
@@ -26,10 +28,10 @@ func (c *Core) roleLock(role string) *sync.Mutex {
 // missing or unhealthy. Unknown roles and the coordinator role are rejected.
 func (c *Core) ensureSpecialist(ctx context.Context, role string) (*instance, error) {
 	if _, ok := c.findRole(role); !ok {
-		return nil, fmt.Errorf("core: unknown role %q", role)
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("core: unknown role %q", role))
 	}
 	if role == c.coordinatorRole() {
-		return nil, fmt.Errorf("core: coordinator role %q does not accept tasks", role)
+		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("core: coordinator role %q does not accept tasks", role))
 	}
 
 	// Serialize lookup-destroy-respawn per role so concurrent asks for the

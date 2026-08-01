@@ -49,9 +49,9 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 
 	logger, logFile, err := config.NewFileLogger(workspace)
 	if err != nil {
+		_ = backend.Close()
 		return nil, err
 	}
-	slog.SetDefault(logger)
 
 	return &Core{
 		cfg:         cfg,
@@ -63,6 +63,11 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 		registry:    newRegistry(),
 		spawnLocks:  make(map[string]*sync.Mutex),
 	}, nil
+}
+
+// Logger returns the core's logger for slog.SetDefault at the entry point.
+func (c *Core) Logger() *slog.Logger {
+	return c.logger
 }
 
 // resolveMechaBinary returns the mecha binary path. It defaults to the
@@ -80,7 +85,7 @@ func resolveMechaBinary() string {
 }
 
 // Start starts the gRPC server and runs the coordinator in the foreground,
-// blocking until the coordinator exits.
+// blocking until the coordinator exits. Resources are always released.
 func (c *Core) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -99,7 +104,9 @@ func (c *Core) Start(ctx context.Context) error {
 	}()
 	c.logger.Info("gRPC server listening", "addr", c.addr)
 
-	return c.launchCoordinator(ctx)
+	err = c.launchCoordinator(ctx)
+	c.shutdown()
+	return err
 }
 
 // shutdown kills all specialist panes, then stops the gRPC server. Panes are

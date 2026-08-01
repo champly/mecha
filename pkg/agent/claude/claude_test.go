@@ -12,10 +12,14 @@ import (
 )
 
 func testAgentConfig() config.AgentConfig {
+	// Point Binary at the test binary itself so tests don't depend on the
+	// real CLI being installed.
+	bin, _ := os.Executable()
 	return config.AgentConfig{
-		Name:  "claude-default",
-		Type:  "claude",
-		Model: "claude-sonnet-4-5",
+		Name:   "claude-default",
+		Type:   "claude",
+		Model:  "claude-sonnet-4-5",
+		Binary: bin,
 	}
 }
 

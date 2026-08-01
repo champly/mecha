@@ -27,7 +27,11 @@ type Claude struct {
 
 // New returns a Claude agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Claude{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
+	base := agenttypes.NewBase(ctx, cfg, runtime)
+	if _, err := base.ResolveBinary(claudeBinary); err != nil {
+		return nil, err
+	}
+	return &Claude{Base: base}, nil
 }
 
 func (c *Claude) claudeMdPath() string {

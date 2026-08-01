@@ -27,7 +27,11 @@ type CodeBuddy struct {
 
 // New returns a CodeBuddy agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &CodeBuddy{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
+	base := agenttypes.NewBase(ctx, cfg, runtime)
+	if _, err := base.ResolveBinary(codebuddyBinary); err != nil {
+		return nil, err
+	}
+	return &CodeBuddy{Base: base}, nil
 }
 
 func (c *CodeBuddy) promptPath() string {

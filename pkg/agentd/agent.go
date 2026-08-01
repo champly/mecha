@@ -53,18 +53,47 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 
 	a.mu.Lock()
 	a.ptmx = ptmx
+	a.cmd = cmd
 	a.mu.Unlock()
 
 	restore := makeRawIfTerminal()
 
 	out := &activityWriter{w: os.Stdout, last: &a.lastOutput}
 	go io.Copy(out, ptmx)
-	go io.Copy(ptmx, os.Stdin)
+	go a.forwardStdin()
 	go a.watchWinch()
 	go a.watchReady()
 	go a.waitAgent(cmd, restore)
 
 	return nil
+}
+
+// forwardStdin copies stdin to the PTY until shutdown. os.Stdin.Read is
+// blocking; a.stop only takes effect between reads. The goroutine exits
+// when stdin is closed or the process terminates — the stray goroutine
+// after signalStop is harmless.
+func (a *Agentd) forwardStdin() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return
+		}
+		select {
+		case <-a.stop:
+			return
+		default:
+		}
+		a.mu.Lock()
+		ptmx := a.ptmx
+		a.mu.Unlock()
+		if ptmx == nil {
+			return
+		}
+		if _, err := ptmx.Write(buf[:n]); err != nil {
+			return
+		}
+	}
 }
 
 // activityWriter records the time of each write, used to detect when the
@@ -153,20 +182,23 @@ func makeRawIfTerminal() func() {
 // waitAgent waits for the agent to exit, restores the terminal, fails any
 // in-flight task, then closes the PTY and signals shutdown.
 func (a *Agentd) waitAgent(cmd *exec.Cmd, restore func()) {
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		slog.Warn("agent exited", "id", a.opts.ID, "err", err)
+	}
 	restore()
 
-	a.mu.Lock()
-	if a.hasTask {
-		a.hasTask = false
-		a.taskCh <- taskResult{result: "agent exited during task"}
+	if r, ok := a.takeTaskResult(taskResult{result: "agent exited during task"}); ok {
+		a.taskCh <- r
 	}
-	a.mu.Unlock()
 
 	a.mu.Lock()
-	a.ptmx.Close()
+	ptmx := a.ptmx
 	a.ptmx = nil
+	a.cmd = nil
 	a.mu.Unlock()
+	if ptmx != nil {
+		_ = ptmx.Close()
+	}
 	a.signalStop()
 }
 

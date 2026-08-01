@@ -12,10 +12,14 @@ import (
 )
 
 func testAgentConfig() config.AgentConfig {
+	// Point Binary at the test binary itself so tests don't depend on the
+	// real CLI being installed.
+	bin, _ := os.Executable()
 	return config.AgentConfig{
-		Name:  "codex-default",
-		Type:  "codex",
-		Model: "gpt-5.5",
+		Name:   "codex-default",
+		Type:   "codex",
+		Model:  "gpt-5.5",
+		Binary: bin,
 	}
 }
 
@@ -141,9 +145,6 @@ func TestParseHookEvent_Stop(t *testing.T) {
 	if e.Output != "hello world" {
 		t.Errorf("Output = %q, want %q", e.Output, "hello world")
 	}
-	if e.OutputSource != "provider_field" {
-		t.Errorf("OutputSource = %q, want %q", e.OutputSource, "provider_field")
-	}
 }
 
 func TestParseHookEvent_SessionStart(t *testing.T) {
@@ -181,9 +182,6 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 	}
 	if e.Error != "overloaded" {
 		t.Errorf("Error = %q, want %q", e.Error, "overloaded")
-	}
-	if e.OutputSource != "none" {
-		t.Errorf("OutputSource = %q, want %q", e.OutputSource, "none")
 	}
 }
 

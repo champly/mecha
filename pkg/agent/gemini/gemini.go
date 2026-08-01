@@ -22,7 +22,11 @@ type Gemini struct {
 
 // New returns a Gemini agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Gemini{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
+	base := agenttypes.NewBase(ctx, cfg, runtime)
+	if _, err := base.ResolveBinary(geminiBinary); err != nil {
+		return nil, err
+	}
+	return &Gemini{Base: base}, nil
 }
 
 func (g *Gemini) geminiMdPath() string {

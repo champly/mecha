@@ -11,10 +11,14 @@ import (
 )
 
 func testAgentConfig() config.AgentConfig {
+	// Point Binary at the test binary itself so tests don't depend on the
+	// real CLI being installed.
+	bin, _ := os.Executable()
 	return config.AgentConfig{
-		Name:  "gemini-default",
-		Type:  "gemini",
-		Model: "gemini-3-flash-preview",
+		Name:   "gemini-default",
+		Type:   "gemini",
+		Model:  "gemini-3-flash-preview",
+		Binary: bin,
 	}
 }
 
@@ -150,9 +154,6 @@ func TestParseHookEvent_AfterAgent(t *testing.T) {
 	}
 	if e.Output != "hello world" {
 		t.Errorf("Output = %q, want %q", e.Output, "hello world")
-	}
-	if e.OutputSource != "provider_field" {
-		t.Errorf("OutputSource = %q, want %q", e.OutputSource, "provider_field")
 	}
 }
 

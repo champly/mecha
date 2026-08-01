@@ -13,10 +13,14 @@ import (
 )
 
 func testAgentConfig() config.AgentConfig {
+	// Point Binary at the test binary itself so tests don't depend on the
+	// real CLI being installed.
+	bin, _ := os.Executable()
 	return config.AgentConfig{
-		Name:  "codebuddy-default",
-		Type:  "codebuddy",
-		Model: "sonnet",
+		Name:   "codebuddy-default",
+		Type:   "codebuddy",
+		Model:  "sonnet",
+		Binary: bin,
 	}
 }
 
@@ -185,9 +189,6 @@ func TestParseHookEvent(t *testing.T) {
 		if ev.Output != "当前系统时间：2026年7月28日" {
 			t.Errorf("output = %q, want %q", ev.Output, "当前系统时间：2026年7月28日")
 		}
-		if ev.OutputSource != "provider_field" {
-			t.Errorf("output_source = %q, want %q", ev.OutputSource, "provider_field")
-		}
 	})
 
 	t.Run("Stop without last_assistant_message", func(t *testing.T) {
@@ -198,9 +199,6 @@ func TestParseHookEvent(t *testing.T) {
 		}
 		if ev.Output != "" {
 			t.Errorf("output = %q, want empty", ev.Output)
-		}
-		if ev.OutputSource != "" {
-			t.Errorf("output_source = %q, want empty", ev.OutputSource)
 		}
 	})
 

@@ -28,10 +28,6 @@ func RoleDir(workspace, roleName string) string {
 	return filepath.Join(workspace, configDirName, rolesDirName, roleName)
 }
 
-// ValidateAgentType is an optional hook for validating agent type strings.
-// When nil, validation is skipped. The agent package sets this during init().
-var ValidateAgentType func(typ string) bool
-
 // MechaBinary is the default mecha binary path for webhook callbacks; Core
 // copies it into Runtime.MechaBinary at startup. Override via ldflags:
 //
@@ -139,15 +135,17 @@ type Config struct {
 	Profiles map[string]ProfileConfig `yaml:"profiles"`
 }
 
-// LoadConfig reads YAML config from path, validates it, and completes it with defaults.
-// If path is empty, ~/.mecha/config.yaml is used.
-func LoadConfig(path string) (Config, error) {
+// LoadConfig reads YAML config from path, validates it, and completes it with
+// defaults. If path is empty, ~/.mecha/config.yaml is used. validType
+// validates agent type strings; pass agent.ValidateAgentType to reject
+// unknown types at startup.
+func LoadConfig(path string, validType func(string) bool) (Config, error) {
 	c, err := parseConfigFile(path)
 	if err != nil {
 		return Config{}, err
 	}
 
-	if err := c.validate(); err != nil {
+	if err := c.validate(validType); err != nil {
 		return Config{}, err
 	}
 
@@ -180,8 +178,9 @@ func parseConfigFile(path string) (Config, error) {
 }
 
 // validate checks basic consistency: unique agent names, resolvable agent
-// references, and exactly one coordinator role per profile.
-func (c Config) validate() error {
+// references, and exactly one coordinator role per profile. validType
+// validates agent type strings (nil skips).
+func (c Config) validate(validType func(string) bool) error {
 	agentNames := make(map[string]struct{}, len(c.Agents))
 	for _, agent := range c.Agents {
 		name := strings.TrimSpace(agent.Name)
@@ -193,9 +192,9 @@ func (c Config) validate() error {
 		}
 		agentNames[name] = struct{}{}
 
-		if ValidateAgentType != nil {
+		if validType != nil {
 			agentType := strings.TrimSpace(agent.Type)
-			if !ValidateAgentType(agentType) {
+			if !validType(agentType) {
 				return fmt.Errorf("config: unknown agent type %q", agentType)
 			}
 		}
@@ -244,8 +243,8 @@ func (c Config) validate() error {
 				return fmt.Errorf("config: role %q in profile %q references unknown agent %q", role.Name, profileName, name)
 			}
 
-			if ValidateAgentType != nil {
-				if typ := strings.TrimSpace(role.Agent.Type); typ != "" && !ValidateAgentType(typ) {
+			if validType != nil {
+				if typ := strings.TrimSpace(role.Agent.Type); typ != "" && !validType(typ) {
 					return fmt.Errorf("config: role %q in profile %q: unknown agent type %q", role.Name, profileName, typ)
 				}
 			}

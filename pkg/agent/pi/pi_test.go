@@ -12,10 +12,14 @@ import (
 )
 
 func testAgentConfig() config.AgentConfig {
+	// Point Binary at the test binary itself so tests don't depend on the
+	// real CLI being installed.
+	bin, _ := os.Executable()
 	return config.AgentConfig{
-		Name:  "pi-default",
-		Type:  "pi",
-		Model: "claude-sonnet-4-20250514",
+		Name:   "pi-default",
+		Type:   "pi",
+		Model:  "claude-sonnet-4-20250514",
+		Binary: bin,
 	}
 }
 
@@ -158,9 +162,6 @@ func TestParseHookEvent(t *testing.T) {
 		}
 		if ev.Output != "done!" {
 			t.Errorf("output = %q, want %q", ev.Output, "done!")
-		}
-		if ev.OutputSource != "provider_field" {
-			t.Errorf("OutputSource = %q, want %q", ev.OutputSource, "provider_field")
 		}
 	})
 

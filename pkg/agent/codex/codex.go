@@ -24,7 +24,11 @@ type Codex struct {
 
 // New returns a Codex agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Codex{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
+	base := agenttypes.NewBase(ctx, cfg, runtime)
+	if _, err := base.ResolveBinary(codexBinary); err != nil {
+		return nil, err
+	}
+	return &Codex{Base: base}, nil
 }
 
 func (c *Codex) agentsMdPath() string {

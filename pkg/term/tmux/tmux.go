@@ -62,9 +62,17 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 
 	if cmd := driver.BuildCommand(spec); cmd != "" {
 		if err := sendLiteral(ctx, paneID, cmd); err != nil {
+			// The split already happened; destroy the pane, keep it in the
+			// chain only when the kill fails.
+			if _, kerr := tmux(ctx, "kill-pane", "-t", paneID); kerr != nil {
+				t.panes.Push(paneID)
+			}
 			return nil, err
 		}
 		if err := sendEnter(ctx, paneID); err != nil {
+			if _, kerr := tmux(ctx, "kill-pane", "-t", paneID); kerr != nil {
+				t.panes.Push(paneID)
+			}
 			return nil, err
 		}
 	}

@@ -56,10 +56,13 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 	}
 	c.logger.Info("coordinator ready", "role", roleName)
 
-	if err := cmd.Wait(); err != nil {
-		c.logger.Info("coordinator exited with error", "err", err)
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		// A cancelled ctx is an intentional shutdown, not a failure.
+		return nil
 	}
-
-	c.shutdown()
-	return nil
+	if waitErr != nil {
+		c.logger.Warn("coordinator exited with error", "role", roleName, "err", waitErr)
+	}
+	return waitErr
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoadConfig(t *testing.T) {
-	cfg, err := LoadConfig("config.yaml")
+	cfg, err := LoadConfig("config.yaml", nil)
 	if err != nil {
 		t.Fatalf("LoadConfig() error: %v", err)
 	}
@@ -30,11 +30,7 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestValidateInvalidAgentType(t *testing.T) {
-	// Save and restore the global ValidateAgentType hook.
-	saved := ValidateAgentType
-	t.Cleanup(func() { ValidateAgentType = saved })
-
-	ValidateAgentType = func(typ string) bool {
+	validType := func(typ string) bool {
 		valid := map[string]bool{
 			"claude": true,
 			"codex":  true,
@@ -50,7 +46,7 @@ func TestValidateInvalidAgentType(t *testing.T) {
 		},
 	}
 
-	err := cfg.validate()
+	err := cfg.validate(validType)
 	if err == nil {
 		t.Fatal("expected error for unknown agent type, got nil")
 	}
@@ -66,7 +62,7 @@ func TestValidateProfileRequired(t *testing.T) {
 			"p1": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	if err := cfg.validate(); err == nil {
+	if err := cfg.validate(nil); err == nil {
 		t.Fatal("expected error for empty profile, got nil")
 	}
 }
@@ -79,7 +75,7 @@ func TestValidateProfileNotFound(t *testing.T) {
 			"p1": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil {
 		t.Fatal("expected error for unknown profile, got nil")
 	}
@@ -99,7 +95,7 @@ func TestValidateDuplicateRoleName(t *testing.T) {
 			}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate role name, got nil")
 	}
@@ -118,7 +114,7 @@ func TestValidateEmptyRoleName(t *testing.T) {
 			}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil {
 		t.Fatal("expected error for empty role name, got nil")
 	}
@@ -135,7 +131,7 @@ func TestValidateAgentNameRequired(t *testing.T) {
 			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != "config: agent name is required" {
 		t.Errorf("validate() = %v, want agent-name-required error", err)
 	}
@@ -149,7 +145,7 @@ func TestValidateDuplicateAgentName(t *testing.T) {
 			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != `config: duplicate agent name "a"` {
 		t.Errorf("validate() = %v, want duplicate-agent-name error", err)
 	}
@@ -164,7 +160,7 @@ func TestValidateDefaultAgentNotFound(t *testing.T) {
 			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != `config: default agent "missing" not found` {
 		t.Errorf("validate() = %v, want default-agent-not-found error", err)
 	}
@@ -178,7 +174,7 @@ func TestValidateRoleReferencesUnknownAgent(t *testing.T) {
 			"p": {Roles: []Role{{Name: "r", IsCoordinator: true, Agent: AgentConfig{Name: "ghost"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != `config: role "r" in profile "p" references unknown agent "ghost"` {
 		t.Errorf("validate() = %v, want unknown-agent-reference error", err)
 	}
@@ -192,7 +188,7 @@ func TestValidateCoordinatorMissing(t *testing.T) {
 			"p": {Roles: []Role{{Name: "r", Agent: AgentConfig{Name: "a"}}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != `config: profile "p" must have one role with is_coordinator=true` {
 		t.Errorf("validate() = %v, want coordinator-missing error", err)
 	}
@@ -209,7 +205,7 @@ func TestValidateCoordinatorMultiple(t *testing.T) {
 			}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(nil)
 	if err == nil || err.Error() != `config: profile "p" has multiple coordinator roles (is_coordinator=true)` {
 		t.Errorf("validate() = %v, want multiple-coordinator error", err)
 	}
@@ -276,10 +272,7 @@ func TestInitConfig(t *testing.T) {
 }
 
 func TestValidateRoleLevelAgentTypeOverride(t *testing.T) {
-	saved := ValidateAgentType
-	t.Cleanup(func() { ValidateAgentType = saved })
-
-	ValidateAgentType = func(typ string) bool {
+	validType := func(typ string) bool {
 		return typ == "claude" || typ == "codex"
 	}
 
@@ -294,7 +287,7 @@ func TestValidateRoleLevelAgentTypeOverride(t *testing.T) {
 			}}},
 		},
 	}
-	err := cfg.validate()
+	err := cfg.validate(validType)
 	if err == nil {
 		t.Fatal("expected error for role-level unknown agent type, got nil")
 	}
@@ -327,7 +320,7 @@ func TestCompleteMergesRoleParamsAndEnvs(t *testing.T) {
 			}}},
 		},
 	}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(nil); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
 	cfg.complete()

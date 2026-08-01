@@ -24,11 +24,13 @@ func init() {
 	Register("codex", codex.New)
 	Register("gemini", gemini.New)
 	Register("pi", pi.New)
+}
 
-	config.ValidateAgentType = func(typ string) bool {
-		_, ok := registry[typ]
-		return ok
-	}
+// ValidateAgentType reports whether typ is a registered agent type; pass it
+// to config.LoadConfig.
+func ValidateAgentType(typ string) bool {
+	_, ok := registry[typ]
+	return ok
 }
 
 // Register registers an agent type factory.

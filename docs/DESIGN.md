@@ -448,7 +448,6 @@ type HookEvent struct {
     Event        string `json:"event"`
     SessionID    string `json:"session_id,omitempty"`
     Output       string `json:"output,omitempty"`
-    OutputSource string `json:"output_source,omitempty"`
     Error        string `json:"error,omitempty"`
 }
 ```

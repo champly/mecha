@@ -18,7 +18,6 @@ func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 		case agenttypes.EventStop:
 			if msg, ok := m["last_assistant_message"].(string); ok && msg != "" {
 				e.Output = msg
-				e.OutputSource = "provider_field"
 			}
 		case agenttypes.EventStopFailure:
 			if et, ok := m["error_type"].(string); ok && et != "" {
@@ -26,7 +25,6 @@ func (c *Codex) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
 			} else if msg, ok := m["error"].(string); ok && msg != "" {
 				e.Error = msg
 			}
-			e.OutputSource = "none"
 		}
 	})
 }

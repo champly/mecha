@@ -2,12 +2,16 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/champly/mecha/pkg/agent"
 	"github.com/champly/mecha/pkg/api"
 	"github.com/champly/mecha/pkg/config"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -21,19 +25,22 @@ type grpcService struct {
 func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*api.RegisterResponse, error) {
 	inst := s.core.registry.get(req.Id)
 	if inst == nil {
-		return nil, fmt.Errorf("unknown instance %q", req.Id)
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("unknown instance %q", req.Id))
 	}
-	inst.markRegistered()
 
+	// Mark registered only after validation, so a failed registration does
+	// not hold the slot.
 	role, ok := s.core.findRole(inst.role)
 	if !ok {
-		return nil, fmt.Errorf("unknown role %q", inst.role)
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("unknown role %q", inst.role))
 	}
 
 	agentCfg, err := api.AgentConfigFromNative(role.Agent)
 	if err != nil {
-		return nil, fmt.Errorf("role %q: %w", inst.role, err)
+		return nil, status.Error(codes.Internal, fmt.Sprintf("role %q: %v", inst.role, err))
 	}
+
+	inst.markRegistered()
 
 	return &api.RegisterResponse{
 		Workspace: s.core.workspace,
@@ -79,11 +86,11 @@ func (s *grpcService) Ask(ctx context.Context, req *api.AskRequest) (*api.AskRes
 func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]) error {
 	id := api.GetInstanceID(stream.Context())
 	if id == "" {
-		return fmt.Errorf("missing instance ID")
+		return status.Error(codes.InvalidArgument, "missing instance ID")
 	}
 	inst := s.core.registry.get(id)
 	if inst == nil {
-		return fmt.Errorf("unknown instance %q for TaskChannel", id)
+		return status.Error(codes.NotFound, fmt.Sprintf("unknown instance %q for TaskChannel", id))
 	}
 
 	inst.attach(stream)
@@ -92,6 +99,10 @@ func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult
 	for {
 		result, err := stream.Recv()
 		if err != nil {
+			// EOF and Canceled are normal stream teardown.
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
+				return nil
+			}
 			return err
 		}
 		inst.deliverResult(&api.AskResponse{

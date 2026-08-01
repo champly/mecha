@@ -23,7 +23,11 @@ type Pi struct {
 
 // New returns a Pi agent helper.
 func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	return &Pi{Base: agenttypes.NewBase(ctx, cfg, runtime)}, nil
+	base := agenttypes.NewBase(ctx, cfg, runtime)
+	if _, err := base.ResolveBinary(piBinary); err != nil {
+		return nil, err
+	}
+	return &Pi{Base: base}, nil
 }
 
 func (p *Pi) piMdPath() string {

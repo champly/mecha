@@ -30,7 +30,7 @@ type ITerm2 struct {
 // Spawn. When ITERM_SESSION_ID is unavailable, Spawn falls back to the
 // active session.
 func New() (driver.Backend, error) {
-	c, err := dial()
+	c, err := dial(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +52,12 @@ func Match() bool {
 	return strings.Contains(strings.ToLower(os.Getenv("TERM_PROGRAM")), "iterm")
 }
 
-func (p *ITerm2) ensureConn() error {
-	if p.conn != nil {
+func (p *ITerm2) ensureConn(ctx context.Context) error {
+	if p.conn != nil && !p.conn.dead {
 		return nil
 	}
-	c, err := dial()
+	// Redial dead connections.
+	c, err := dial(ctx)
 	if err != nil {
 		return err
 	}
@@ -68,7 +69,7 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if err := p.ensureConn(); err != nil {
+	if err := p.ensureConn(ctx); err != nil {
 		return nil, err
 	}
 
@@ -80,10 +81,10 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 		if target == "" {
 			target = activeSession
 		}
-		sessionID, err = p.conn.splitSession(target, true) // vertical
+		sessionID, err = p.conn.splitSession(ctx, target, true) // vertical
 	} else {
 		// Subsequent splits: split the last session horizontally.
-		sessionID, err = p.conn.splitSession(p.sessions.Last(), false) // horizontal
+		sessionID, err = p.conn.splitSession(ctx, p.sessions.Last(), false) // horizontal
 	}
 	if err != nil {
 		return nil, err
@@ -92,13 +93,31 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	if cmd := driver.BuildCommand(spec); cmd != "" {
 		// \n alone causes line feed without carriage return.
 		// \r\n gives the terminal both: cursor to column 0 + down one line.
-		if err := p.conn.sendText(sessionID, cmd+"\r\n"); err != nil {
+		if err := p.conn.sendText(ctx, sessionID, cmd+"\r\n"); err != nil {
+			// The split already happened; close the session, keep it in the
+			// chain only when the close fails.
+			if cerr := p.closeOrphan(ctx, sessionID); cerr != nil {
+				p.sessions.Push(sessionID)
+			}
 			return nil, err
 		}
 	}
 
 	p.sessions.Push(sessionID)
 	return driver.NewHandle("iterm2", sessionID), nil
+}
+
+// closeOrphan closes a session Spawn created but could not configure,
+// redialing first when the send killed the connection.
+func (p *ITerm2) closeOrphan(ctx context.Context, sessionID string) error {
+	if p.conn.dead {
+		c, err := dial(ctx)
+		if err != nil {
+			return err
+		}
+		p.conn = c
+	}
+	return p.conn.closeSessions(ctx, sessionID)
 }
 
 func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
@@ -110,7 +129,7 @@ func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
 	}
 
 	paneID := h.PaneID()
-	err := p.conn.closeSessions(paneID)
+	err := p.conn.closeSessions(ctx, paneID)
 	// Remove the id even when the close failed: a pane whose process already
 	// exited refuses to close, and a stale id in the chain would break every
 	// subsequent spawn as a split target.

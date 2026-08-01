@@ -43,11 +43,10 @@ const (
 )
 
 type HookEvent struct {
-	Event        string `json:"event"`
-	SessionID    string `json:"session_id,omitempty"`
-	Output       string `json:"output,omitempty"`
-	OutputSource string `json:"output_source,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Event     string `json:"event"`
+	SessionID string `json:"session_id,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // Base carries the runtime fields shared by all agent drivers.
@@ -81,6 +80,19 @@ func (b *Base) PrepareRoleFile(filename string) error {
 		return fmt.Errorf("write %s: %w", filename, err)
 	}
 	return nil
+}
+
+// ResolveBinary resolves the agent binary (cfg.Binary or defaultBinary) and
+// verifies it exists, failing at factory time instead of at PTY launch.
+func (b *Base) ResolveBinary(defaultBinary string) (string, error) {
+	binary := b.Cfg.Binary
+	if binary == "" {
+		binary = defaultBinary
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		return "", fmt.Errorf("agent binary %q: %w", binary, err)
+	}
+	return binary, nil
 }
 
 // NewAgentCmd builds the process command with the model flag, merged

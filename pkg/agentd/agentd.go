@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,12 +33,13 @@ type Agentd struct {
 	hookCh  chan types.HookEvent
 
 	ptmx    *os.File
+	cmd     *exec.Cmd
 	taskCh  chan taskResult
 	stop    chan struct{}
 	ready   chan struct{}
 	logFile *os.File
 
-	mu         sync.Mutex // guards ptmx and hasTask
+	mu         sync.Mutex // guards ptmx, cmd and hasTask
 	hasTask    bool
 	lastOutput atomic.Int64 // unix nano of last agent output, for TUI readiness
 	closeOnce  sync.Once
@@ -123,7 +125,8 @@ func (a *Agentd) Wait() {
 	<-a.stop
 }
 
-// Close releases resources held by agentd. It is safe to call multiple times.
+// Close releases the Core connection, webhook server, log file, PTY, and
+// agent process. Safe to call multiple times.
 func (a *Agentd) Close() {
 	a.closeOnce.Do(func() {
 		if a.conn != nil {
@@ -134,6 +137,21 @@ func (a *Agentd) Close() {
 		}
 		if a.logFile != nil {
 			a.logFile.Close()
+		}
+
+		// Closing the PTY hangs up the agent; Kill is the fallback.
+		a.mu.Lock()
+		ptmx := a.ptmx
+		a.ptmx = nil
+		cmd := a.cmd
+		a.cmd = nil
+		a.mu.Unlock()
+
+		if ptmx != nil {
+			_ = ptmx.Close()
+		}
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
 		}
 	})
 }
@@ -159,21 +177,27 @@ func (a *Agentd) handleHook(ev types.HookEvent) {
 		a.reportStatus(api.StatusStarted)
 
 	case types.EventStop:
-		a.mu.Lock()
-		if a.hasTask {
-			a.taskCh <- taskResult{success: true, result: ev.Output}
-			a.hasTask = false
+		if r, ok := a.takeTaskResult(taskResult{success: true, result: ev.Output}); ok {
+			a.taskCh <- r
 		}
-		a.mu.Unlock()
 
 	case types.EventStopFailure:
-		a.mu.Lock()
-		if a.hasTask {
-			a.taskCh <- taskResult{result: ev.Error}
-			a.hasTask = false
+		if r, ok := a.takeTaskResult(taskResult{result: ev.Error}); ok {
+			a.taskCh <- r
 		}
-		a.mu.Unlock()
 	}
+}
+
+// takeTaskResult claims the task slot under the lock; the taskCh send
+// happens outside it.
+func (a *Agentd) takeTaskResult(r taskResult) (taskResult, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.hasTask {
+		return taskResult{}, false
+	}
+	a.hasTask = false
+	return r, true
 }
 
 // initLogging opens the same log file as core and sets it as the default slog
