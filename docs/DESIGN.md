@@ -1,6 +1,8 @@
 # Mecha 设计文档
 
-> mecha 是一个多 agent 编排系统。用户直接与 Coordinator 交互，Coordinator 通过 `mecha ask` 同步派发任务给 Specialist。每个 role 由一个 agentd 进程托管：agentd 拉起并常驻 agent 进程（PTY），通过 gRPC 与 Core 通信，agent 的 Hook 事件经本地 HTTP 回传给 agentd。Specialist agentd 运行在独立终端 pane 中，用户可直接围观。
+> 本文档根据当前代码实现整理，描述系统**实际**行为而非原始设计意图。
+>
+> mecha 是一个多 agent 编排系统：用户与 Coordinator 对话，Coordinator 通过 `mecha ask` 把任务同步派发给 Specialist。每个 role 由一个 agentd 进程托管——agentd 用 PTY 拉起常驻 agent CLI，经 gRPC 与 Core 通信；agent 的 Hook 事件经本地 HTTP 回传给 agentd。Specialist agentd 运行在独立终端 pane 中，执行过程可直接围观。
 
 ---
 
@@ -10,15 +12,15 @@
 
 | 名词 | 含义 |
 |---|---|
-| mecha | 唯一的编排进程（Core），负责加载配置、启动/回收 agentd |
-| Core | mecha 进程内的编排核心，暴露 gRPC 服务，管理所有 agentd 实例 |
-| Coordinator | 用户默认交互角色，承担入口与派活职责 |
+| mecha | 唯一二进制，包含 Core、agentd、CLI 全部功能 |
+| Core | `mecha run` 进程内的编排核心，暴露 gRPC 服务，管理所有 agentd 实例 |
+| Coordinator | 用户交互角色；prompt 注入派发指令（available_roles），Core 拒绝向它派发任务 |
 | Specialist | 被 Coordinator 调度的角色，处理具体任务 |
-| agentd | agent 守护进程，托管一个 agent 进程（PTY），通过 gRPC 与 Core 通信；coordinator 和 specialist 是同一个 agentd 二进制，仅启动方式与用途不同 |
-| role agent | 跑在 agentd PTY 里的 agent CLI 进程（Claude Code / Codex / Gemini / CodeBuddy / Pi） |
-| role | agent 的职责定义，由 profile 中的角色配置描述 |
-| profile | 一组角色集合，启动时选择 |
-| id | agentd 实例 ID（UUID），由 Core 拉起 agentd 时分配，生命周期内不变；也是 gRPC 协议中的唯一标识 |
+| agentd | agent 守护进程，托管一个 agent 进程（PTY），经 gRPC 与 Core 通信；coordinator 和 specialist 是同一个 agentd 二进制，仅启动方式不同 |
+| role agent | 跑在 agentd PTY 里的 agent CLI 进程（Claude / Codex / Gemini / CodeBuddy / Pi） |
+| role | agent 的职责定义（name + prompt + agent 配置） |
+| profile | 一组 role 集合，启动时由 `profile` 字段选择 |
+| id | agentd 实例 ID（UUID），由 Core 拉起 agentd 时分配；gRPC 协议中的唯一标识 |
 | pane | 终端面板（tmux / iTerm2 / Ghostty），承载一个 specialist agentd |
 
 ---
@@ -37,91 +39,66 @@ mecha run
       │    ├── Ask           ← mecha ask CLI（阻塞等结果）
       │    └── TaskChannel   ← agentd 双向流，下发任务/回传结果
       │
-      ├─ agentd (coordinator role) ── 前台子进程，接管当前终端
+      ├─ agentd (coordinator role) ── exec.Command 前台子进程，stdio 直连当前终端
       │   ├─ gRPC Register + TaskChannel → Core
       │   ├─ HTTP 127.0.0.1:<随机端口> POST /webhook ← agent hook
       │   └─ agent 进程 (PTY) ↔ agentd stdio 直通终端
       │
-      └─ agentd (specialist role) ─── 终端 pane（tmux / iTerm2 / Ghostty）
+      └─ agentd (specialist role) ─── term.Backend.Spawn() 终端 pane
           ├─ gRPC Register + TaskChannel → Core
           ├─ HTTP 127.0.0.1:<随机端口> POST /webhook ← agent hook
           └─ agent 进程 (PTY) ↔ agentd stdio 直通 pane
 ```
 
-- **Coordinator agentd** 是 Core 的 `exec.Command` 前台子进程，stdin/stdout/stderr 直连当前终端
-- **Specialist agentd** 通过终端后端 `Spawn()` 在独立 pane 中启动
-- agentd 功能完全对等：coordinator 与 specialist 的区别仅在于使用方式（一个只发 `mecha ask`，一个只接任务）
-- agent 的 hook 目标是 agentd 的本地 HTTP 端口，agent 不感知 Core
+- Coordinator agentd 是 Core 的前台子进程，stdin/stdout/stderr 直连终端；Core 用 `context.AfterFunc` 保证 ctx 取消时强杀 coordinator
+- Specialist agentd 通过终端后端 `Spawn()` 在独立 pane 中启动
+- 二者功能对等，区别仅在使用方式（coordinator 只发 `mecha ask`，specialist 只接任务）
+- agent 的 hook 目标是 agentd 的本地 HTTP 端口，agent 不感知 Core 的存在（`NewFromConfig` 下发的 Runtime 只含 `MechaBinary`，不含 Core 地址）
 - role agent 之间不直接通信，产物落在 workspace 文件系统中
 
 ### 2.2 生命周期
 
 | 触发 | 动作 |
 |---|---|
-| mecha 启动 | 加载配置，Core 绑定 gRPC 监听，拉起 coordinator agentd（前台） |
-| agentd 启动 | 起本地 webhook HTTP → gRPC 连接 Core → Register 换取配置 → 建立 TaskChannel → 启动 agent（PTY） |
-| 首次 `ask <role>` | Spawn 新 pane 启动 specialist agentd，等待 Register（5s 超时）与 ready（30s 超时） |
-| 再次 `ask <role>` | 复用已有健康实例，经 TaskChannel 下发任务 |
+| `mecha run` | 加载配置 → 检测终端后端 → 打开日志文件 → 绑定 gRPC（127.0.0.1:0）→ 拉起 coordinator agentd（前台，等 register 5s + ready 30s）→ 阻塞等其退出 |
+| agentd 启动 | 本地 webhook HTTP → gRPC 连接 → Register 换取配置 → 建立 TaskChannel（先于 agent 启动）→ Prepare + PTY 启动 agent → hookLoop + supervise |
+| 首次 `ask <role>` | Spawn 新 pane 启动 specialist agentd，等 register（5s）+ ready（30s） |
+| 再次 `ask <role>` | 复用健康实例，经 TaskChannel 下发任务 |
 | 任务完成 | agent 触发 Stop/StopFailure hook → agentd 回传 TaskResult → 实例回到 running |
-| agent 退出 | agentd 上报 exited，Core 标记实例 unhealthy，不自动重启 |
-| 下一次 `ask <role>` 且 unhealthy | 清理旧 pane，重建新 pane + 新 agentd + 新 agent |
-| Coordinator 退出 | 级联 Kill 所有 specialist pane，gRPC server 优雅停止（5s 超时强制 Stop） |
+| 任务超时（30min） | Core 侧返回错误且实例保持 unhealthy；agentd 侧直接 signalStop 自杀 |
+| agent 退出 | agentd 失败在途任务、上报 exited；Core 立即失败等待中的 Ask，实例标记 unhealthy |
+| 下次 `ask <role>` 且 unhealthy | destroy 旧实例（Kill pane），重建新 pane + 新 agentd + 新 agent |
+| Coordinator 退出 | shutdown：Kill 所有 pane → GracefulStop（5s 超时强制 Stop）→ 再兜底 Kill 一遍 → backend.Close |
 
 ### 2.3 约束
 
-- 1 role = 1 个活跃实例，同一 role 任务串行（Core 侧 per-instance `taskMu`）
-- role 目录在 agent `Prepare()` 时生成
-- 每个 profile 必须且只能有一个 `is_coordinator: true` 的 role
-- 协议中只有 `id`（agentd 实例 ID）：Register 只携带 id，role 由 Core 的实例表反查；TaskChannel 通过 gRPC metadata `instance-id` 标识连接
+- 1 role = 1 个活跃实例；同一 role 任务串行（per-instance `taskMu`），不同 role 可并行
+- specialist 的查找/重建按 **per-role 锁**串行（`spawnLocks` map），不同 role 的 spawn 互不阻塞
+- 每个 profile 必须且只能有一个 `is_coordinator: true` 的 role（config 校验保证）
+- 协议中只有 `id`：Register 只携带 id，role 由 Core 实例表反查；TaskChannel 通过 gRPC metadata `instance-id` 标识连接
+- Ask 明确拒绝 coordinator role（`FailedPrecondition`）和未知 role（`NotFound`）
 
 ---
 
 ## 3. 配置
 
-文件: `~/.mecha/config.yaml`
+### 3.1 文件与路径
 
-```yaml
-agent: claude-sonnet-4-6          # 默认 agent
+| 路径 | 内容 |
+|---|---|
+| `~/.mecha/config.yaml` | 全局配置（`mecha init` 写出，`mecha run` 加载，可用 `--config` 覆盖） |
+| `~/.mecha/logs/<workspace 扁平化>/<YYYY-MM-DD>.log` | Core 与 agentd 共用日志（追加） |
+| `<workspace>/.mecha/roles/<role>/` | role 生成物（prompt 文件、hook settings），项目级 |
 
-agents:
-  - name: claude-sonnet-4-6
-    type: claude
-    model: claude-sonnet-4-6
-    envs:
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192"
+日志目录名规则：workspace 路径去掉前导 `/`，其余 `/` 替换为 `_`（如 `/Users/x/proj` → `Users_x_proj`），文件名为本地时区日期。
 
-profile: softwarecompany
-
-profiles:
-  softwarecompany:
-    roles:
-      - name: lead
-        is_coordinator: true
-        prompt: |
-          你是运行在 mecha 里的 Lead...
-        agent:
-          name: claude-sonnet-4-6
-
-      - name: coder
-        prompt: |
-          你是一个开发者...
-        agent:
-          name: claude-sonnet-4-6
-```
-
-**配置解析规则：**
-- `agent` 指向默认 agent，role 可通过 `agent.name` 覆盖
-- `config.complete()` 做三件事：trim whitespace、解析 role 级别 agent 覆盖（Type/Binary/Model/Params/Envs 合并到 base agent）、写回 map
-- `config.validate()` 检查：agent name 非空且唯一、agent type 已注册、默认 agent 存在、role name 非空且 profile 内唯一、每个 role 的 agent 可解析、每个 profile 恰好一个 Coordinator
-- 默认配置通过 `//go:embed config.yaml` 嵌入二进制，`mecha init` 写出到 `~/.mecha/config.yaml`（已存在时备份为 `.bak`，`-f` 直接覆盖）
-
-### 3.1 配置结构体
+### 3.2 配置结构
 
 ```go
 type Config struct {
-    Agent    string                    `yaml:"agent"`
+    Agent    string                    `yaml:"agent"`    // 默认 agent 名
     Agents   []AgentConfig             `yaml:"agents"`
-    Profile  string                    `yaml:"profile"`
+    Profile  string                    `yaml:"profile"`  // 激活的 profile
     Profiles map[string]ProfileConfig  `yaml:"profiles"`
 }
 
@@ -138,196 +115,223 @@ type Role struct {
 
 type AgentConfig struct {
     Name   string            `yaml:"name,omitempty"`
-    Type   string            `yaml:"type"`
+    Type   string            `yaml:"type"`   // claude / codex / gemini / codebuddy / pi
     Binary string            `yaml:"binary,omitempty"`
     Model  string            `yaml:"model"`
     Params map[string]any    `yaml:"params"`
     Envs   map[string]string `yaml:"envs"`
 }
-```
 
-### 3.2 Runtime 与 mecha 二进制解析
-
-```go
-type Runtime struct {
-    MechaBinary string  // mecha 二进制路径
-    Addr        string  // Core gRPC 监听地址（host:port）
+type Runtime struct {           // 非 yaml，启动期构造
+    MechaBinary string          // mecha 二进制路径
+    Addr        string          // Core gRPC 地址（仅用于渲染 coordinator prompt）
 }
 ```
 
-`Runtime` 在启动时构造，用于渲染 role prompt（coordinator 的 `<available_roles>` 块需要 `--addr`），并经 Register 响应下发给 agentd（hook 命令使用）。
+### 3.3 加载、校验与补全
 
-`MechaBinary` 由 `resolveMechaBinary()` 解析：
+`LoadConfig(path, validType)`：path 为空用默认路径 → yaml 解析 → `validate` → `complete`。
 
-1. 构建时通过 ldflags 覆盖 `config.MechaBinary`（`-X .../config.MechaBinary=/custom/path`）→ 用覆盖值
-2. 否则用 `os.Executable()`（当前二进制的绝对路径）
+**validate 规则**（对**所有** profile 生效，不只激活的）：
+
+- agent：name 必填且唯一；`validType` 非 nil 时 type 必须在注册表中（`run` 传入 `agent.ValidateAgentType`）
+- 默认 agent（`Config.agent`）非空时必须存在于 agents 列表
+- `profile` 必填且必须存在于 `profiles`
+- role：name 必填、profile 内唯一；agent 引用可解析（`role.agent.name` 为空回落到默认 agent）；role 级 `agent.type` 非空时同样过类型校验
+- 每个 profile **恰好一个** coordinator（0 个或多个都报错）
+
+**complete 合并规则**：
+
+- trim 各字段空白；`params` 空值归一为非 nil 空 map
+- 每个 role 的 `agent` 被重写为解析后的完整 AgentConfig：以引用的 agent 为 base，role 级非空的 `type`/`binary`/`model` 逐字段覆盖；`params`/`envs` 按 key 合并、**role 赢**（base 的 map 不被污染）
+
+**InitConfig(force)**（`mecha init`）：
+
+- 目标固定 `~/.mecha/config.yaml`，内容来自 `//go:embed` 的默认配置
+- 已存在且 `force=false`：旧文件 rename 为 `config.yaml.bak`（只保留一代，旧 .bak 被删除）后写入
+- `force=true`：直接覆盖，不备份
+
+### 3.4 mecha 二进制解析
+
+`resolveMechaBinary()`：
+
+1. `config.MechaBinary != "mecha"`（构建时经 ldflags `-X .../config.MechaBinary=<path>` 覆盖）→ 用覆盖值
+2. 否则 `os.Executable()`（当前二进制绝对路径）
 
 保证 hook 命令和 agentd 拉起不依赖 PATH。
+
+### 3.5 默认嵌入配置
+
+`agent: claude-sonnet-4-6`，`profile: softwarecompany`。agents 定义 4 个（claude-sonnet-4-6 / claude-opus-4-8 / codebuddy / pi）；profile 含 5 个 role：`lead`（coordinator）、`architect`、`coder`、`tester`、`reviewer`。
 
 ---
 
 ## 4. 启动与退出
 
-### 4.1 Core 启动流程
+### 4.1 Core 启动（`mecha run`，裸 `mecha` 等同）
 
 ```
-mecha run（裸 `mecha` 等同 `mecha run`）
-  │
-  ├── config.LoadConfig("")            # ~/.mecha/config.yaml
-  ├── core.New(workspace, cfg)
-  │   ├── term.New()                   # 自动检测终端 (tmux > iTerm2 > Ghostty)
-  │   ├── config.NewFileLogger()       # ~/.mecha/logs/<路径下划线分隔>/YYYY-MM-DD.log
-  │   └── resolveMechaBinary()         # os.Executable()，ldflags 覆盖优先
-  └── c.Start(ctx)
-      ├── 1. 绑定 TCP listener (127.0.0.1:0)
-      ├── 2. 注册 gRPC api.Core 服务并 Serve
-      ├── 3. launchCoordinator()：
-      │   ├── 找 coordinator role，分配 id，登记实例表
-      │   ├── exec.Command(mecha agentd --id <id> --addr <addr>) 前台启动（stdio 直通终端）
-      │   ├── waitRegistered (5s) + waitReady (30s)
-      │   └── cmd.Wait() 阻塞直到 coordinator 退出
-      └── 4. shutdown()（coordinator 退出后）
-             ├── 级联 Kill 所有 specialist pane（每个 5s 超时）
-             └── GracefulStop（5s 超时后强制 Stop）
+1. config.LoadConfig(configPath, agent.ValidateAgentType)
+2. core.New(workspace, cfg)
+   ├── term.New()                # 按 tmux → iTerm2 → Ghostty 顺序检测，全不匹配报 ErrUnsupported
+   ├── config.NewFileLogger()    # ~/.mecha/logs/<workspace>/<date>.log
+   └── resolveMechaBinary()
+3. c.Start(ctx)（ctx 监听 SIGINT/SIGTERM）
+   ├── net.Listen("tcp", "127.0.0.1:0")
+   ├── grpc.NewServer() + api.RegisterCoreServer，goroutine Serve
+   └── launchCoordinator(ctx) 阻塞：
+       ├── 取 profile 中第一个 IsCoordinator 的 role；backend.Label(roleName)（仅 Warn）
+       ├── newInstance(uuid) + registry.add
+       ├── exec.Command(mechaBinary, "agentd", "--id", id, "--addr", addr)
+       │   stdio 直连终端；context.AfterFunc(ctx, Process.Kill)
+       ├── waitRegistered(5s) + waitReady(30s)，失败则 Kill + Wait 收割后报错
+       └── cmd.Wait() 阻塞至退出；ctx 已取消视为正常关停
+4. shutdown()
+   ├── killAllPanes()            # 第一遍：让任务流断开，GracefulStop 才能返回
+   ├── GracefulStop，5s 超时后 server.Stop() 强停
+   ├── killAllPanes()            # 第二遍：兜底关停期间新 spawn 的 pane
+   ├── backend.Close()
+   └── logFile.Close()
 ```
 
-### 4.2 agentd 启动流程（`mecha agentd --id <id> --addr <addr>`）
+### 4.2 agentd 启动（`mecha agentd --id <id> --addr <addr>`）
+
+严格顺序，任一步失败 `Close()` 后返回：
 
 ```
-1. 启动本地 webhook HTTP server (127.0.0.1:0)
-2. gRPC 连接 Core，Register(id) 换取 workspace/prompt/role/agent 配置/mechaBinary
-3. 建立 TaskChannel 双向流（metadata 携带 instance-id）
-   —— 先于 agent 启动建立，保证 Core 判定 ready 后即可下发任务
-4. startAgent：agent.NewFromConfig → Prepare()（写 role 目录）→ PTY 启动
-   ├── makeRawIfTerminal: agentd stdin 切 raw 模式（是终端时），
-   │   按键与终端查询响应原样透传给 agent TUI；agent 退出时恢复
-   ├── io.Copy: PTY ↔ agentd stdio 双向转发（输出经 activityWriter 打点）
-   ├── watchWinch: SIGWINCH → 调整 PTY 尺寸
-   ├── watchReady: 判定 agent TUI 就绪，close(ready)（见 5.1）
-   └── waitAgent: 等退出 → 恢复终端 → 失败在途任务 → 关 PTY → close(stop)
-5. hookLoop（消费 webhook 事件）+ supervise（退出后上报 exited 并清理）
+1. initLogging（与 Core 同一日志文件，失败静默）
+2. WebhookServer 起 HTTP（127.0.0.1:0，POST /webhook）
+3. grpc.NewClient(CoreAddr, insecure)（lazy dial）+ Register(id)（metadata 带 instance-id）
+   ← 返回 workspace / prompt（已渲染）/ role_name / mecha_binary / agent 配置
+4. connectTaskChannel()：先于 agent 建立 bidi 流（保证 Core 判 ready 后可立即下发任务），go taskLoop
+5. startAgent：
+   ├── agent.NewFromConfig → Prepare()（写 role 文件）→ webhook.SetParseFunc(ParseHookEvent)
+   ├── launchPTY：取 stdin 窗口尺寸（失败退化 24×80）→ pty.StartWithSize → 固定 sleep 100ms
+   ├── makeRawIfTerminal：stdin 是终端则切 raw，退出时恢复
+   └── goroutines: io.Copy(ptmx → activityWriter → stdout)、forwardStdin（4KB buf）、
+       watchWinch（SIGWINCH 调 PTY 尺寸）、watchReady（TUI 就绪判定）、waitAgent（等退出）
+6. go hookLoop + go supervise；Start 返回，CLI 层 d.Wait() 阻塞在 <-stop
 ```
 
-### 4.3 生成物
+**退出链**：`waitAgent`（agent 退出）/ `taskLoop`（流断开，视为 Core 已死）/ 任务超时 → `signalStop()` → `supervise` 先 `ReportStatus(exited)` 再 `Close()`。`Close`（closeOnce 保护）：关 gRPC conn → webhook Shutdown（5s）→ logFile → 关 PTY（hangup agent）→ `Process.Kill` 兜底。
+
+### 4.3 生成物与 prompt 渲染
+
+role 目录 `<workspace>/.mecha/roles/<role>/` 的内容因 agent 类型而异（见 §7）。
+
+prompt 由 Core 在 Register 时用 `agent.RenderPrompt` 渲染，模板三段：
+
+1. `<your_assigned_role>`：role 原始 prompt
+2. `<working_directory>`：提示真实项目路径
+3. `<available_roles>`：**仅 coordinator** 追加，格式：
 
 ```
-<workspace>/.mecha/roles/<role-name>/
-├── CLAUDE.md                          # role prompt，通过 --append-system-prompt-file 注入
-└── settings.json                      # hook 配置，通过 --settings 合并到全局配置
-```
-
-（Codex 为 `AGENTS.md` + `--config` 注入；Gemini 为 `GEMINI.md` + `.gemini/settings.json`。）
-
-settings.json 注册的 hooks：
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "<mechaBinary>",
-      "args": ["webhook", "--addr", "<agentd-addr>"] }] }],
-    "Stop":         [{ "hooks": [{ "type": "command", "command": "<mechaBinary>",
-      "args": ["webhook", "--addr", "<agentd-addr>"] }] }],
-    "StopFailure":  [{ "hooks": [{ "type": "command", "command": "<mechaBinary>",
-      "args": ["webhook", "--addr", "<agentd-addr>"] }] }]
-  }
-}
-```
-
-每个 hook 触发时执行 `<mechaBinary> webhook --addr <agentd-addr>`，hook JSON 通过 stdin 传入，再由 `mecha webhook` POST 到 agentd 的 `http://<agentd-addr>/webhook`。
-
-### 4.4 Prompt 渲染
-
-Coordinator 的 prompt 额外包含 `<available_roles>` 块（由 Core 在 Register 时用 `agent.RenderPrompt` 渲染）：
-
-```
-<available_roles>
 You can delegate tasks by running:
 	<mechaBinary> ask --addr <ADDR> <role> "<task>"
 
 Available roles:
-- architect: 你是系统架构师...
-- coder: 你是开发实现者...
-</available_roles>
+- <name>: <prompt 首行>      # 在第一个 \n 或中文句号处截断
 ```
 
-Specialist 不含此块，不能调度子 agent。
+Specialist 不含此块，不能调度子 agent。模板执行失败时降级返回原始 prompt。
 
 ---
 
-## 5. 任务分派 (Ask)
+## 5. 任务分派（Ask）
 
-### 5.1 流程
-
-```
-coordinator 执行: mecha ask --addr <ADDR> <role> "<task>"
-  │
-  └── gRPC Core.Ask(role, task)  (阻塞)
-       │
-       └── grpcService.Ask → ensureSpecialist(role) → inst.execute(ctx, task)
-            │
-            ├── ensureSpecialist(role)
-            │   ├── 未知 role / coordinator role → 直接拒绝，不 spawn
-            │   ├── 已有健康实例 → 复用
-            │   ├── unhealthy → 销毁旧实例（Kill pane），重建
-            │   └── 不存在 → backend.Spawn() 新 pane 启动 agentd
-            │       ├── 等待 register (5s 超时 → 销毁失败)
-            │       └── 等待 ready = 任务流挂载 + started (30s 超时 → 销毁失败)
-            │
-            └── inst.execute(task)
-                ├── taskMu 加锁（同 role 任务串行）
-                ├── status = busy
-                ├── TaskChannel 下发 TaskRequest{id, task}
-                │   └── agentd: 等待 TUI 就绪 → 写入 agent PTY (task + "\r") → 等待 hook
-                ├── 等待 TaskResult（Stop → success+output; StopFailure → error）
-                │   ├── agentd 断连 → 立即返回错误
-                │   ├── ctx 取消 → 返回 ctx.Err()
-                │   └── 超时 30min → 返回错误
-                ├── status = running
-                └── return AskResponse
-```
-
-- `mecha ask` 同步阻塞，成功时 stdout 直接输出 agent 返回内容，exit 0
-- 失败时 stderr 输出错误信息，exit 1
-
-**TUI 就绪闸门（agentd 侧）：**
-
-Core 的 ready（任务流挂载 + SessionStart）在 agent 启动后约 0.3–1s 即达成，但此时 agent 的 TUI 尚未完成初始化。初始化窗口内写入 PTY 的内容会出现"文本进入输入框、回车被吞"的问题。因此 agentd 增加第二层就绪判定：
-
-- `activityWriter` 在 PTY → stdio 的输出链路上记录最后一次输出时间
-- `watchReady` 检测到输出静默超过 **1.5s**（初始渲染完成的标志）即 close `ready`，30s 超时兜底放行
-- `handleTask` 写入任务前先等待 `ready`（或 agent 退出）
-
-该判定与 agent 类型无关（Claude / Codex / Gemini 的 TUI 均适用）。
-
-### 5.2 Agent 状态机
+### 5.1 Core 侧流程
 
 ```
-                                   register + started
-                    Spawn agentd ──► starting ─────────────────────────► running
-                      │                │                               │
-                      │                │ 5s 注册超时 / 30s 启动超时     │ Ask 下发任务
-                      │                ▼                               ▼
-                      │           启动失败并清理                      busy
-                      │                                                │
-                      │                              ┌─────────────────┼──────────┐
-                      │                              ▼                 ▼          ▼
-                      │                         Stop (完成)      StopFailure   agent 退出
-                      │                              │              (失败)        │
-                      │                              └──────┬──────────┘          │
-                      │                                     ▼                     ▼
-                      │                                  running             unhealthy
-                      │                                                                 │
-                      └───────────────────────────────────────────────── 下次 ask 时重建
+mecha ask --addr <ADDR> <role> "<task>"   (unary，阻塞)
+  └── grpcService.Ask
+       ├── ensureSpecialist(ctx, role)
+       │   ├── findRole 查不到            → NotFound
+       │   ├── role 是 coordinator        → FailedPrecondition
+       │   ├── 取 per-role 锁
+       │   ├── 已有实例且非 unhealthy     → 复用
+       │   ├── unhealthy                  → destroy（remove + Kill pane 5s）
+       │   └── Spawn(Spec{WorkDir, Command, Role}) 新 pane
+       │       ├── waitRegistered (5s)   ─┐
+       │       └── waitReady (30s)        ┴─ 任一失败 destroy 并返回错误
+       │          ready = stream attached + SessionStart（maybeReady，与到达顺序无关）
+       └── inst.execute(ctx, task)
+           ├── taskMu 加锁；快照 stream/resultCh/discCh
+           ├── 状态 → busy
+           ├── 先 drain resultCh 中的陈旧结果（上一个超时/取消任务遗留）
+           ├── stream.Send(TaskRequest{uuid, task})
+           └── 单一 30min timer 循环 select：
+               ├── resultCh：id 不匹配 → 丢弃继续等（不重设 deadline）；匹配 → 返回
+               ├── discCh 关闭（agentd 断连 / agent 退出）→ 立即返回 "agentd disconnected during task"
+               ├── ctx.Done → 返回 ctx.Err()
+               └── timer 到 → 返回 "core: task timeout"，状态保持 unhealthy（不恢复 running）
 ```
 
-| 状态 | 含义 |
+- 结果投递（`deliverResult`）**永不阻塞**：resultCh 容量 1，满时 evict 旧结果再放新结果（满缓冲里只可能是陈旧结果，丢新结果会让 execute 挂满 30min）
+- TaskChannel handler：metadata 取 `instance-id`（缺失 InvalidArgument），registry 查不到 NotFound；`attach` + `defer detach`；EOF/Canceled 视为正常拆流
+- `detach` 只在 **stream 指针相同**时生效：stale 流拆除不会误伤重连后的新流；生效时置 nil、`closeDisc()`、状态 → unhealthy
+- `markExited`（ReportStatus exited）同样 `closeDisc()`：agent 退出时在途任务立即失败，不等 agentd 断连或 30min 超时
+
+### 5.2 agentd 侧任务执行
+
+```
+taskLoop: stream.Recv() 出错 → signalStop()（视为 Core 已死，避免孤儿 agent；恢复靠 Core 重建链）
+handleTask（串行）:
+  1. 等 <-ready（TUI 就绪）或 <-stop（回 "agent exited during task"）
+  2. ptmx == nil → "agent not running"
+  3. 分两次写 PTY：先写 task 文本，sleep 100ms，再写 "\r"
+     （一次写入时 \r 可能先于文本被 TUI 事件循环处理，长任务回车被吞）
+  4. select：
+     ├── taskCh 收到 hook 结果 → 回 TaskResult{Id, Success, Result}
+     ├── stop → "agent exited during task"
+     └── 30min 超时 → 日志报错并 signalStop() 自杀（不回结果，让 Core 判 unhealthy 重建）
+```
+
+**TUI 就绪闸门（watchReady）**：Core 的 ready（任务流 + SessionStart）在 agent 启动后约 0.3–1s 即达成，但 TUI 尚未完成初始化，此时写入 PTY 会丢回车。因此 agentd 增加第二层判定：
+
+- `activityWriter` 在 PTY → stdout 链路上记录最后输出时间（unix nano）
+- 每 50ms 轮询：有过输出且静默超过 **1.5s** → 判定 quiet；再固定等 **500ms** grace period（防初始化步骤间的短暂停顿误判）→ close(ready)
+- **30s** 内未 quiet → Warn 日志兜底放行（照样 close ready）
+- 任何退出路径都保证 close(ready)（defer）
+
+**hook 处理（handleHook）**：只处理三种事件——
+
+| 事件 | 动作 |
 |---|---|
-| starting | agentd 已 spawn，等待注册和 agent 启动完成 |
-| running | agentd 和 agent 就绪，可接收任务 |
-| busy | 正在执行任务，等待 Stop / StopFailure / agent 退出 |
-| unhealthy | agent 已退出，当前 pane 禁止接任务，下次 ask 重建 |
+| SessionStart | ReportStatus(started) |
+| Stop | 有在途任务 → taskCh ← {success, output}；无任务静默丢弃 |
+| StopFailure | 有在途任务 → taskCh ← {failure, error}；无任务静默丢弃 |
 
-### 5.3 关键数据结构
+`ReportStatus` 每次 RPC 带 **2s deadline**（防 Core 挂死阻塞 hookLoop 进而堵死 agent 的 hook 进程）。
+
+### 5.3 状态机
+
+```
+                                 register + started
+                  Spawn agentd ──► starting ────────────────────────► running
+                    │                │                              │
+                    │      5s 注册超时 / 30s ready 超时             │ Ask 下发任务
+                    │                ▼                              ▼
+                    │         启动失败并清理                       busy
+                    │                                               │
+                    │            ┌──────────────┬───────────────────┼──────────┐
+                    │            ▼              ▼                   ▼          ▼
+                    │       Stop (完成)    StopFailure (失败)   agent 退出   任务 30min 超时
+                    │            └──────┬──────┘              断连            │
+                    │                   ▼                        └─────┬──────┘
+                    │                running                            ▼
+                    │                                              unhealthy
+                    │                                                 │
+                    └──────────────────────────────── 下次 ask 时 destroy + 重建
+```
+
+| 状态 | 值 | 含义 |
+|---|---|---|
+| starting | 1 | 已 spawn，等待注册和 agent 启动完成 |
+| running | 2 | 就绪，可接收任务 |
+| busy | 3 | 任务在途，等待 Stop / StopFailure / 退出 / 超时 |
+| unhealthy | 4 | agent 退出 / 断连 / 任务超时，禁止接任务，下次 ask 重建 |
+
+### 5.4 关键结构体
 
 ```go
 type Core struct {
@@ -337,42 +341,51 @@ type Core struct {
     logFile     *os.File
     mechaBinary string
 
-    backend  term.Backend
-    registry *registry    // id/role 双索引，内部加锁
-    spawnMu  sync.Mutex   // 串行化 specialist 的查找与重建
+    backend    term.Backend
+    registry   *registry              // id/role 双索引，内部加锁
+    spawnMu    sync.Mutex             // 只保护 spawnLocks map 本身
+    spawnLocks map[string]*sync.Mutex // per-role spawn 锁
 
     addr   string
     server *grpc.Server
 }
 
 type instance struct {
-    id     string
-    role   string
-    handle term.Handle   // specialist pane；coordinator 为 nil
+    id, role string
+    state    atomic.Int32
+    taskMu   sync.Mutex        // 任务串行
 
-    state  atomic.Int32  // starting/running/busy/unhealthy
-    taskMu sync.Mutex    // 任务串行
-
-    stream      grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
-    resultCh    chan *api.AskResponse
-    streamUp    bool           // 任务流已挂载
-    agentUp     bool           // started 已上报
-    registerCh  chan struct{}  // Register 到达后 close
-    readyCh     chan struct{}  // streamUp && agentUp 后 close（与到达顺序无关）
+    mu       sync.Mutex        // 保护以下字段
+    handle   term.Handle       // specialist pane；coordinator 为 nil
+    stream   grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
+    resultCh chan *api.AskResponse  // 容量 1，attach 时重建
+    discCh   chan struct{}          // 断连信号，attach 时重建
+    streamUp, agentUp, registered bool
+    registerCh, readyCh chan struct{}
+    readyClosed bool
 }
 
-// agentd 侧
 type Agentd struct {
-    // ...
-    ptmx       *os.File
-    ready      chan struct{}  // TUI 就绪（输出静默 1.5s）后 close
-    lastOutput atomic.Int64   // 最后一次 agent 输出时间
-    taskCh     chan taskResult
-    hookCh     chan types.HookEvent
+    opts     Options{ID, CoreAddr}
+    client   api.CoreClient
+    conn     *grpc.ClientConn
+    webhook  *WebhookServer
+    hookCh   chan types.HookEvent  // 容量 32
+
+    ptmx     *os.File
+    cmd      *exec.Cmd
+    taskCh   chan taskResult       // 容量 1
+    stop     chan struct{}
+    ready    chan struct{}         // TUI 就绪后 close
+    hasTask  bool
+    lastOutput atomic.Int64
+    closeOnce, stopOnce sync.Once
 }
 ```
 
-### 5.4 Coordinator 与 Specialist 对比
+`registry.remove(inst)` 只删除仍指向该实例的条目——防止旧实例的 destroy 删掉同 role 新实例的索引。
+
+### 5.5 Coordinator 与 Specialist 对比
 
 | | Coordinator | Specialist |
 |---|---|---|
@@ -380,34 +393,39 @@ type Agentd struct {
 | 启动方式 | `exec.Command` 前台子进程 | `backend.Spawn()` 终端 pane |
 | stdin/stdout | 直连终端 | 终端 pane |
 | 有 term.Handle | ❌ | ✅ |
-| 可接收任务 | ❌（TaskChannel 建立但不下发） | ✅ |
+| 可接收任务 | ❌（Ask 拒绝 coordinator role） | ✅ |
 | 可调度子 agent | ✅（prompt 含 available_roles） | ❌ |
 
 ---
 
 ## 6. 通信
 
-### 6.1 Core gRPC 协议（`pkg/api/api.proto`）
+### 6.1 Core gRPC 协议（`pkg/api/api.proto`，proto3）
 
 service `api.Core`，四个方法：
 
 | 方法 | 类型 | 调用方 | 用途 |
 |---|---|---|---|
-| `Register` | unary | agentd → Core | 注册实例（只携带 id），返回 workspace/prompt/role/agent 配置/mechaBinary |
+| `Register` | unary | agentd → Core | 注册实例（只携带 id），返回 workspace/prompt/role/agent 配置/mecha_binary |
 | `ReportStatus` | unary | agentd → Core | 上报 `started`（SessionStart 后）/ `exited`（agent 退出后） |
 | `Ask` | unary | mecha ask → Core | 派发任务，阻塞等待结果 |
-| `TaskChannel` | bidi stream | agentd → Core | Core 下发 `TaskRequest`，agentd 回传 `TaskResult`；连接以 metadata `instance-id` 标识 |
+| `TaskChannel` | bidi stream | agentd → Core | 下行 `TaskRequest`，上行 `TaskResult`；连接以 metadata `instance-id` 标识 |
 
-**关键消息：**
+**消息定义：**
 
 ```proto
 message RegisterRequest  { string id = 1; }
 message RegisterResponse {
   string workspace = 1;
-  string prompt = 2;        // 已渲染（含 available_roles）
+  string prompt = 2;        // 已渲染（coordinator 含 available_roles）
   string role_name = 3;
   string mecha_binary = 4;
-  AgentConfig agent = 5;    // type/binary/model/params/envs
+  AgentConfig agent = 5;
+}
+message AgentConfig {
+  string type = 1; string binary = 2; string model = 3;
+  google.protobuf.Struct params = 4;   // yaml map[string]any → Struct
+  map<string, string> envs = 5;
 }
 message StatusRequest { string id = 1; string status = 2; string msg = 3; }
 message AskRequest    { string role = 1; string task = 2; }
@@ -416,257 +434,216 @@ message TaskRequest   { string id = 1; string task = 2; }
 message TaskResult    { string id = 1; bool success = 2; string result = 3; }
 ```
 
-**失败策略：**
-- agent 退出后不自动重启当前 pane，实例标记 unhealthy
-- 若当时有 in-flight 任务：agentd 先回传失败结果；agentd 断连时 Core 也会主动失败等待中的 Ask
-- 下一次同 role `ask` 时重建新 pane + 新 agentd + 新 agent
+**实现细节：**
 
-### 6.2 agentd 本地 HTTP
+- 状态常量仅 `started` / `exited`；`msg` 字段目前未被使用
+- `ReportStatus` 对未知 id 返回成功（空响应），不报错
+- 任务超时 `TaskTimeout = 30min` 为协议常量，Core 与 agentd 两侧共用
+- 无 TLS、无鉴权，监听仅 127.0.0.1
 
-| 路由 | 调用方 | 请求 | 响应 |
-|---|---|---|---|
-| `POST /webhook` | mecha webhook CLI | 原始 hook JSON（stdin 透传） | 200 OK / 400 / 405 |
+### 6.2 agentd 本地 HTTP（webhook）
 
-监听 `127.0.0.1:0`，仅本机可达；agent 不感知 Core 地址。
+| 项 | 值 |
+|---|---|
+| 监听 | `127.0.0.1:0`（随机端口） |
+| 路由 | 仅 `POST /webhook`，其他方法 405 |
+| body | 原始 hook JSON，上限 1 MiB（超限/读失败 400） |
+| parseFn 未设置（agent 未 Prepare 完） | 400 "agent not ready" |
+| 解析失败 | 400（body 截断 512 字符记日志） |
+| 成功 | 200；server 关闭中阻塞的 handler 以 503 解阻 |
+| 关闭 | `Shutdown` 5s 超时 |
 
 ### 6.3 Hook 事件流
 
 ```
-Agent 触发 hook (SessionStart / Stop / StopFailure)
-  └── 执行: <mechaBinary> webhook --addr <agentd-addr>     (hook JSON 经 stdin)
+Agent 触发 hook
+  └── 执行 hook 命令: <mechaBinary> webhook --addr <agentd-addr>   (hook JSON 经 stdin)
+       │    mecha webhook：10s 客户端超时；非 200 读最多 1 MiB 错误体
        └── POST http://<agentd-addr>/webhook
-            └── agentd: agent.ParseHookEvent(raw) → hookCh → handleHook
-                 ├── SessionStart → ReportStatus(started) → Core: close(ready)，状态 running
+            └── agentd: parseFn(raw) → hookCh(容量32) → handleHook
+                 ├── SessionStart → ReportStatus(started) → Core: markStarted → ready
                  ├── Stop         → taskCh ← {success, output} → TaskResult
-                 └── StopFailure  → taskCh ← {error} → TaskResult
+                 └── StopFailure  → taskCh ← {failure, error} → TaskResult
 ```
 
 **统一事件结构（`pkg/agent/types`）：**
 
 ```go
 type HookEvent struct {
-    Event        string `json:"event"`
-    SessionID    string `json:"session_id,omitempty"`
-    Output       string `json:"output,omitempty"`
-    Error        string `json:"error,omitempty"`
+    Event     string `json:"event"`
+    SessionID string `json:"session_id,omitempty"`
+    Output    string `json:"output,omitempty"`
+    Error     string `json:"error,omitempty"`
 }
 ```
 
-解析逻辑从 agent 原生 hook JSON 中提取 `session_id`、`last_assistant_message`（Claude/Codex）或 `prompt_response`（Gemini AfterAgent 事件，映射为 Stop）、`error_type`。
+事件常量 4 个：`SessionStart` / `PostToolBatch` / `Stop` / `StopFailure`。其中 `PostToolBatch` 仅 claude 的 eventMap 能识别，**没有任何 agent 的 hook 配置注册它**，agentd 的 handleHook 也不处理。
 
-### 6.4 Terminal Backend 接口
+统一解析框架 `ParseHook(prefix, raw, eventMap, extract)`：读 `hook_event_name` 查 eventMap（未知事件报错）→ 提取顶层 `session_id` → 调 agent 自定义的 extract 填 output/error。
 
-```go
-type Backend interface {
-    Spawn(ctx context.Context, spec Spec) (Handle, error)
-    Kill(ctx context.Context, handle Handle) error
-    // Close 释放后端持有的资源（如 iTerm2 的 WebSocket 连接）
-    Close() error
-}
+### 6.4 CLI 命令
 
-type Spec struct {
-    WorkDir string
-    Command []string
-}
-
-type Handle interface {
-    ID() string     // mecha 侧展示 ID（如 tmux-1）
-    PaneID() string // 后端原生 pane/session/terminal ID
-}
-```
-
-**后端实现：**
-
-| 后端 | 平台 | 通信方式 | Spawn 引导 | Kill |
-|---|---|---|---|---|
-| tmux | macOS/Linux | tmux CLI | `split-window -h`（首个）/`-v`（后续，50%），`send-keys -l` + `C-m C-j` | `kill-pane` |
-| iTerm2 | macOS | WebSocket (protobuf)，启动即 dial | 首个垂直分割、后续水平分割，`SendTextRequest`（`\r\n` 结尾） | `CloseRequest`，pane 全空后断开连接 |
-| Ghostty | macOS | AppleScript (`osascript`) | `split <terminal> direction right/down` 直接返回新终端，`input text` + `send key "enter"` | AppleScript `close` |
-
-- **后端选择优先级：** tmux → iTerm2 → Ghostty，取第一个匹配环境的
-- **Pane 分割策略：** 第一个 Spawn 垂直分割（右侧），后续水平分割（下方）；backend 内部用 `driver.Chain` 维护 pane 顺序
-- **引导命令：** `driver.BuildCommand(Spec)` 用 shell 安全引号拼接；`WorkDir` 非空时前置 `cd <dir> &&`（tmux 另经 `split-window -c` 直接设置 pane cwd）
-- **Ghostty 注意：** 使用 AppleScript `split` 命令（返回值即新 terminal，不存在计数竞态）；不要用 `perform action "new_split:*"` + `count of terminals` 反查（异步竞态会拿到旧终端）
-- **iTerm2 前提：** 需开启 Preferences → General → Magic → Enable Python API（WebSocket + AppleScript cookie 认证）
-
-### 6.5 CLI 命令
-
-| 命令 | 调用方 | 用途 |
+| 命令 | 调用方 | 说明 |
 |---|---|---|
-| `mecha` / `mecha run` | 用户 | 启动 Core + coordinator |
-| `mecha init [-f]` | 用户 | 写出默认 `~/.mecha/config.yaml`（存在则备份 .bak，-f 覆盖） |
-| `mecha ask --addr <ADDR> <role> "<task>"` | Coordinator | gRPC `Core.Ask`，阻塞等结果 |
-| `mecha webhook --addr <ADDR>` | agent hook | stdin 读取 hook JSON，POST 到 agentd `/webhook` |
-| `mecha agentd --id <id> --addr <ADDR>` | Core | 运行 agentd（用户不直接调用） |
-| `mecha version` | 用户 | 输出版本、构建日期和 Go 运行时信息 |
+| `mecha` / `mecha run` | 用户 | 启动 Core + coordinator；`--config <path>` 指定配置（默认 `~/.mecha/config.yaml`） |
+| `mecha init [-f]` | 用户 | 写出默认配置；存在时备份 `.bak`，`-f` 直接覆盖不备份 |
+| `mecha ask --addr <ADDR> <role> "<task>"` | Coordinator | 阻塞等结果；成功 stdout 原样输出（**无结尾换行**）exit 0；失败 stderr + exit 1 |
+| `mecha webhook --addr <ADDR>` | agent hook | stdin → POST agentd `/webhook`（10s 超时） |
+| `mecha agentd --id <id> --addr <ADDR>` | Core | 运行 agentd（内部命令） |
+| `mecha version` | 用户 | 输出 Version / Date / Go 运行时（ldflags 注入，默认 Unknown / n/a） |
 
-`<ADDR>` 统一为 `host:port`；Core 默认监听 `127.0.0.1:<随机端口>`。
+`--config` 是 root 的 persistent flag，但只有 run/裸命令读取它。
 
-### 6.6 Agent 接口
+---
+
+## 7. Agent 实现
+
+### 7.1 接口与共享件
 
 ```go
-type AgentContext struct {
-    Workspace   string  // 项目根目录 (cmd.Dir)
-    RoleDir     string  // agent 专属文件目录（CLAUDE.md、settings.json）
-    Prompt      string  // 渲染后的 role prompt
-    WebhookAddr string  // agentd 本地 webhook 地址
-}
-
 type Agent interface {
     Prepare() error
     Cmd() *exec.Cmd
     ParseHookEvent(raw []byte) (HookEvent, error)
 }
 
+type AgentContext struct {
+    Workspace   string  // 项目根目录
+    RoleDir     string  // <workspace>/.mecha/roles/<role>
+    Prompt      string  // 渲染后的 role prompt
+    WebhookAddr string  // agentd 本地 webhook 地址
+}
+
 type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runtime) (Agent, error)
 ```
 
-不同 agent 类型通过 `registry` map 注册（`agent.go init()` 注册 `"claude"` / `"codebuddy"` / `"codex"` / `"gemini"` / `"pi"`）。agentd 用 `agent.NewFromConfig` 按 Register 响应中的配置构造 agent。
+注册表在 `pkg/agent` 的 `init()` 中注册 5 种 type：`claude` / `codebuddy` / `codex` / `gemini` / `pi`。
 
-**环境变量构建（`BuildEnv`）：** agent 进程环境 = 当前进程环境（`os.Environ()`）+ `defaultEnvs` + 用户配置 `envs`，后层覆盖前层，按键排序输出。继承进程环境保证 `TERM`/`COLORTERM`（TUI 彩色输出）、`HOME`、`PATH`、API key 等正常传递。
+**共享工具（`pkg/agent/types`）：**
 
-### 6.7 Claude Agent 实现细节
+- `MergeMap(defaults, user)`：defaults 为底、user 覆盖，返回新 map
+- `BuildArgs(user, defaults)`：合并后按 key 排序输出 `--key value`；**bool true → 裸 `--key`；bool false → 整个省略**（pflag 风格 CLI 中 `--key false` 会把 "false" 漏成位置参数）
+- `BuildEnv(user, defaults)`：三层合并，后层覆盖前层——`os.Environ()` → defaults → user；排序输出。继承进程环境保证 `TERM`/`COLORTERM`/`HOME`/`PATH`/API key 正常传递
+- `ResolveBinary`：`cfg.Binary` 或默认 binary，factory 时即 `exec.LookPath` 校验存在性
+- `WriteJSONFile`：临时文件 + rename 原子写
+- `QuoteShell`：白名单字符（`[A-Za-z0-9_./:@%+=,-]`）不引用，否则单引号包裹
+- `WebhookCommand(binary, addr)` → `<binary> webhook --addr <addr>`（均过 QuoteShell）
 
-**Prepare() 步骤：**
-1. 创建 `<roleDir>/` 目录
-2. 写入 `CLAUDE.md`（渲染后的 prompt）
-3. 写入 `settings.json`（hooks 配置）
+### 7.2 五种 agent 对照
 
-**Cmd() 构建逻辑：**
-- `--model <model>`
-- `--settings <roleDir>/settings.json` 合并 hook 配置到全局 settings
-- `--append-system-prompt-file <roleDir>/CLAUDE.md` 将 role prompt 追加到 system prompt
-- 合并 user params 和 `defaultParams`（`dangerously-skip-permissions: true`），按字母序输出（`BuildArgs`：bool(true) 输出裸 `--key`）
-- 工作目录 = `<workspace>`（项目根目录）
-- 环境 = `BuildEnv(user envs, defaultEnvs)`（`defaultEnvs`：`BASH_DEFAULT_TIMEOUT_MS: 1200000`）
-- 如果 `AgentConfig.Binary` 非空则使用指定 binary，否则默认 `claude`
+| | claude | codex | gemini | codebuddy | pi |
+|---|---|---|---|---|---|
+| 默认 binary | `claude` | `codex` | `gemini` | `codebuddy` | `pi` |
+| Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `.gemini/settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `.pi/settings.json` |
+| defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
+| defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=1200000` | 无 | 无 | `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
+| prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | cmd.Dir=RoleDir，CLI 自行发现 `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <prompt 原文>` + cmd.Dir=RoleDir（双路） |
+| cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | **RoleDir** | Workspace | **RoleDir** |
+| hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
+| 注册的 hook 事件 | SessionStart / Stop / StopFailure | SessionStart / Stop / StopFailure | SessionStart（matcher startup）/ **AfterAgent**（matcher `*`） | SessionStart / Stop / StopFailure | SessionStart（startup）/ Stop（`*`） |
+| 事件映射 | 四事件同名映射（含 PostToolBatch） | 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
+| Stop output 字段 | `last_assistant_message` | `last_assistant_message` | `prompt_response` | `last_assistant_message` | `last_assistant_message` |
+| StopFailure error 字段 | `error_type` 优先，否则 `error` | 同 claude | —（无此事件） | 同 claude | — |
 
-**配置隔离策略：**
-- `--settings` 将 agent hook 配置**叠加合并**到用户全局 `~/.claude/settings.json`，未指定的 key 保留原值
-- 不设置 `CLAUDE_CONFIG_DIR`，全局 `~/.claude/`（MCP servers、credentials 等）完整保留
-- agent 工作目录为 workspace，项目的 `CLAUDE.md` 和 `.claude/` 配置正常加载
+所有 agent 的 `--model <model>` 仅在 cfg.Model 非空时输出；settings 类文件均经 `WriteJSONFile` 原子写入。
 
 ---
 
-## 7. 代码结构
+## 8. 终端后端
 
-```
-main.go                          # 入口，调用 cmd.NewRootCmd().Execute()
+### 8.1 接口与检测
 
-cmd/
-  root.go                        # 根 cobra 命令（裸 mecha = mecha run），注册子命令
-  run.go                         # run 子命令 + runMecha() 启动逻辑
-  init.go                        # init 子命令，输出默认 config.yaml
-  ask.go                         # ask 子命令，gRPC Core.Ask
-  webhook.go                     # webhook 子命令，stdin → POST agentd /webhook
-  agentd.go                      # agentd 子命令（Core 拉起，用户不直接调用）
-  version.go                     # version 子命令
+```go
+type Backend interface {
+    Spawn(ctx context.Context, spec Spec) (Handle, error)
+    Kill(ctx context.Context, handle Handle) error
+    Label(text string) error  // 给当前进程所在 pane 打标签（badge）
+    Close() error
+}
 
-pkg/
-  api/
-    api.proto                    # Core gRPC 服务定义
-    api.pb.go / api_grpc.pb.go   # protoc 生成
-    types.go                     # instance-id metadata、Status 常量、AgentConfig 转换
+type Spec struct {
+    WorkDir string
+    Command []string
+    Role    string  // specialist spawn 时传入，用于 pane badge
+}
 
-  config/
-    config.go                    # Config/Role/AgentConfig/Runtime 结构体，
-                                 # LoadConfig/InitConfig，validate/complete/findAgent，
-                                 # NewFileLogger（~/.mecha/logs/<workspace>/<date>.log），
-                                 # MechaBinary（ldflags 可覆盖）
-    config.yaml                  # 嵌入的默认配置 (//go:embed)
-
-  agent/
-    agent.go                     # registry、NewFromConfig、RenderPrompt（prompt 模板）
-    types/
-      types.go                   # Agent 接口、Factory、AgentContext、HookEvent、
-                                 # 事件常量、MergeMap/BuildArgs/BuildEnv 工具
-    claude/
-      claude.go                  # Claude struct、New/Prepare/Cmd
-      event.go                   # ParseHookEvent、eventMap
-    codebuddy/                   # 同构（CODEBUDDY.md + --settings 注入）
-    codex/                       # 同构（AGENTS.md + --config 注入）
-    gemini/                      # 同构（GEMINI.md + .gemini/settings.json，
-                                 # AfterAgent → Stop 映射）
-    pi/                          # 同构（PI.md + .pi/settings.json）
-
-  agentd/
-    agentd.go                    # Agentd struct、Start/supervise/hookLoop/Close
-    agent.go                     # startAgent、launchPTY、makeRawIfTerminal、
-                                 # activityWriter、watchReady、waitAgent、watchWinch
-    task.go                      # connectTaskChannel/taskLoop/handleTask（TUI 就绪闸门）
-    hook.go                      # WebhookServer（POST /webhook）
-
-  core/
-    core.go                      # Core struct、New/Start、shutdown、role 查询、
-                                 # resolveMechaBinary
-    coordinator.go               # launchCoordinator：前台子进程（stdio 直通终端）+ 退出清理
-    specialist.go                # ensureSpecialist（校验/复用/重建/spawn）、destroy
-    instance.go                  # instance 状态机、attach/detach、execute、等待信号
-    registry.go                  # registry：id/role 双索引，内部加锁
-    server.go                    # grpcService：api.CoreServer 实现，RPC → registry/instance
-
-  term/
-    term.go                      # Backend/Spec/Handle 类型别名、New() 工厂、匹配优先级
-    driver/
-      driver.go                  # Backend/Handle/Spec 接口、Chain、
-                                 # BuildCommand/QuoteShell 工具
-    tmux/                        # tmux CLI 后端
-    iterm2/                      # WebSocket (protobuf) 后端
-      api/                       # protoc 生成的 iTerm2 API
-    ghostty/                     # AppleScript 后端（split 命令）
-
-docs/
-  DESIGN.md                      # 本文档
+type Handle interface {
+    ID() string     // 展示 ID（如 tmux-1），包内 atomic 序号生成
+    PaneID() string // 后端原生 pane/session/terminal ID
+}
 ```
 
+**检测优先级（`term.New()`）**：tmux → iTerm2 → Ghostty，取第一个 Match 的，全不匹配返回 `ErrUnsupported`。
+
+| 后端 | Match 条件 | 平台 |
+|---|---|---|
+| tmux | `TMUX` 环境变量非空 **且** `tmux` binary 存在 | macOS / Linux |
+| iTerm2 | `TERM_PROGRAM`（小写）包含 `iterm` | macOS |
+| Ghostty | `TERM_PROGRAM`（小写）包含 `ghostty` | macOS |
+
+**Anchor 机制**：三个后端都在初始化时钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 用 AppleScript 捕获 front window 的 focused terminal），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。
+
+**driver.Chain**：`[]string` 栈，按分割顺序记录已 spawn pane 的原生 ID；后续分割以 `Last()` 为目标；Kill 时无论成败都 Remove（防 stale ID 成为后续分割目标）。
+
+**BuildCommand**：每个 arg 过 `QuoteShell` 后空格连接；`WorkDir` 非空时前置 `cd <dir> && `。
+
+### 8.2 后端实现对照
+
+| | tmux | iTerm2 | Ghostty |
+|---|---|---|---|
+| 通信方式 | tmux CLI | WebSocket（protobuf over unix socket） | AppleScript（`osascript -e`，无持久连接） |
+| 连接时机 | 每次调用起进程 | **New() 立即 dial**；出错置 dead，下次 Spawn/Kill 自动重拨 | 每次调用起 osascript |
+| 认证 | 无 | osascript 取 cookie/key（10s 超时），header 携带 | macOS Automation 权限 |
+| 首个分割 | `split-window -h -p 50`（右侧） | SplitPaneRequest **VERTICAL**（右侧） | `split <anchor> direction right` |
+| 后续分割 | `split-window -v -p 50`（下方，目标 chain.Last） | **HORIZONTAL**（下方，无比例参数） | `split <last> direction down` |
+| 新 pane ID | `-P -F #{pane_id}` 返回 | SplitPane 响应 | `split` 命令直接返回新 terminal（无计数竞态） |
+| 引导发送 | `send-keys -l <cmd>` + `C-m C-j`（CR+LF） | `SendTextRequest`（`cmd + "\r\n"`）；Role 非空时前缀 badge printf | `input text` + `send key "enter"` |
+| WorkDir | `-c <dir>` 参数 **和** `cd &&` 前缀双保险 | `cd &&` 前缀 | `cd &&` 前缀 |
+| 引导失败回滚 | kill-pane | closeOrphan（连接死了先重拨再 close session） | — |
+| Kill | `kill-pane` | `CloseRequest`；**chain 空时主动断开 WebSocket** | AppleScript `close` |
+| Label | no-op | **真实实现**：向自身 stdout 写 `SetBadgeFormat` 转义序列 | no-op |
+| Close | no-op | 关 WebSocket | no-op |
+
+iTerm2 协议细节：自增 seq 作请求 id，写超时 10s、读超时 30s，跳过 id=0 的通知帧，id 不匹配或解码失败即 fail（关连接置 dead）。socket 路径 `~/Library/Application Support/iTerm2/private/socket`，子协议 `api.iterm2.com`。
+
+Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal）；不要用 `perform action "new_split:*"` + 计数反查（异步竞态会拿到旧终端）。AppleScript 字符串先转义反斜杠再转义双引号（未转义的反斜杠会被静默吞掉）。
+
 ---
 
-## 8. 日志
+## 9. 数值常量汇总
 
-- Core 日志写入文件：`~/.mecha/logs/<workspace 路径扁平化>/<YYYY-MM-DD>.log`（追加模式）
-- 必须落盘：coordinator 以前台方式接管终端，日志打印到终端会干扰 agent TUI
-- 格式：`slog` TextHandler，带 source（文件名缩短为 base）
+| 常量 | 值 | 用途 |
+|---|---|---|
+| registerTimeout | 5s | Core 等 agentd Register |
+| agentStartTimeout | 30s | Core 等 ready（任务流挂载 + SessionStart） |
+| paneKillTimeout | 5s | 单次 Kill pane |
+| serverStopTimeout | 5s | GracefulStop 兜底后强制 Stop |
+| TaskTimeout | 30min | 任务上限，Core/agentd 共用（`api.TaskTimeout`） |
+| readyQuietPeriod | 1.5s | agentd 输出静默判定 TUI 就绪 |
+| readyTimeout | 30s | 就绪判定兜底放行 |
+| 就绪 grace period | 500ms | 静默后再固定等待 |
+| 就绪轮询间隔 | 50ms | watchReady |
+| PTY 启动后 sleep | 100ms | launchPTY 给 TUI 初始化 |
+| task 与回车写入间隔 | 100ms | handleTask 两次写 PTY |
+| ReportStatus deadline | 2s | agentd 每次状态上报 |
+| webhook Shutdown | 5s | agentd 关闭 |
+| webhook body 上限 | 1 MiB | MaxBytesReader |
+| mecha webhook 客户端超时 | 10s | CLI → agentd POST |
+| forwardStdin 缓冲 | 4 KiB | stdin → PTY |
+| PTY 默认尺寸 | 24×80 | 取不到终端尺寸时兜底 |
+| resultCh / taskCh 容量 | 1 | 结果通道 |
+| hookCh 容量 | 32 | hook 事件通道 |
 
 ---
 
-## 9. 设计决策
+## 10. 已知限制
 
-| 决策 | 结论 |
+| 限制 | 说明 |
 |---|---|
-| `mecha ask` 行为 | 同步阻塞，stdout 输出结果 / exit 0，stderr 输出错误 / exit 1 |
-| ask 输出格式 | 直接输出 agent 返回内容，不包装 |
-| 并发策略 | 同一 role 一次一个任务（per-instance `taskMu`），不并发 |
-| 实例标识 | 协议统一使用 agentd 实例 id；TaskChannel 经 gRPC metadata `instance-id` 关联 |
-| agentd 模型 | coordinator 与 specialist 同一二进制，仅启动方式不同（前台子进程 vs pane） |
-| mecha 二进制解析 | `os.Executable()` 绝对路径，ldflags 覆盖优先；hook 与 agentd 拉起不依赖 PATH |
-| TaskChannel 建立时机 | agentd 先于 agent 启动建立；Core 侧 ready = 任务流挂载 + SessionStart 双条件，与到达顺序无关 |
-| TUI 就绪判定 | agentd 侧按 agent 输出静默 1.5s 判定（30s 超时兜底）；初始化窗口内写入会丢回车，必须在写入前等待 |
-| 任务下发方式 | 等待 TUI 就绪后写入 agent PTY（task + `\r`） |
-| agent 环境变量 | 继承进程环境（TERM/API key 等），再叠加 defaultEnvs 与配置 envs |
-| Hook 回调路径 | agent → `mecha webhook` CLI → agentd 本地 HTTP `/webhook`；agent 不感知 Core |
-| agent 退出策略 | 不自动重启，标记 unhealthy，下次 ask 重建新 pane |
-| 断连处理 | agentd 断连时 Core 立即失败等待中的 Ask（不等 30min 超时） |
-| Coordinator 退出 | 级联 Kill specialist pane（每个 5s 超时），gRPC GracefulStop（5s 后强制 Stop） |
-| 启动失败清理 | register/ready 超时即清理实例表并 Kill pane |
-| Backend 接口 | 只保留 Spawn/Kill；任务不经过 pane 文本注入 |
-| pane 分割策略 | 首次垂直（右侧），后续水平（下方） |
-| 后端优先级 | tmux > iTerm2 > Ghostty |
-| Ghostty spawn | AppleScript `split` 命令直接返回新终端（不用 perform action + 计数反查） |
-| Prepare trust dialog | 通过 `dangerously-skip-permissions` 跳过 |
-| 任务超时 | 30 分钟 |
-| 注册/启动超时 | register 5s / agent started 30s |
-| Hook 事件 | 只注册 SessionStart / Stop / StopFailure（不含 PostToolBatch） |
-| iTerm2 连接 | 启动时立即 dial WebSocket（非 lazy），pane 全空后断开 |
-| 日志 | 落盘到 `~/.mecha/logs/`，不打印到终端（coordinator 接管终端） |
-
----
-
-## 10. 遗留项
-
-| 遗留项 | 说明 |
-|---|---|
-| session_id 持久化 | 仅存内存（HookEvent 携带），重启后丢失 |
-| resume 支持 | session_id 已获取，agent 会话恢复机制未接入 |
-| mecha 进程崩溃 | 被 SIGKILL 后 coordinator 和 specialist pane 残留 |
-| TaskChannel 断线重连 | agentd 侧 stream 断开后不自动重连，实例只能等重建 |
-| PostToolBatch 事件 | Claude eventMap 中已定义，但 settings.json 中未注册 hook |
+| session_id 不持久化 | HookEvent 携带 session_id，但只存内存，重启后丢失 |
+| 无 resume | 未接入 agent 会话恢复机制 |
+| mecha 被 SIGKILL | coordinator 与 specialist pane 残留 |
+| TaskChannel 不重连 | agentd 侧流断开即 signalStop 退出，实例靠 Core 下次 ask 重建 |
+| PostToolBatch 未启用 | 常量与 claude eventMap 已定义，但无 hook 注册、handleHook 不处理 |
+| 任务超时的体验 | 30min 超时后实例标记 unhealthy 重建，agent 内可能仍在生成 |
+| 无鉴权 | 所有监听仅绑 127.0.0.1，本机同用户任意进程可调用 Ask（见 README 安全说明） |
