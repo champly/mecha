@@ -30,7 +30,6 @@ message AgentConfig {
 message StatusRequest {
   string id = 1;
   string status = 2;
-  string msg = 3;
 }
 
 message AskRequest {

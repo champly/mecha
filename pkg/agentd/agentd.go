@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/api"
 	"github.com/champly/mecha/pkg/config"
 )
@@ -30,7 +30,7 @@ type Agentd struct {
 	client  api.CoreClient
 	conn    *grpc.ClientConn
 	webhook *WebhookServer
-	hookCh  chan types.HookEvent
+	hookCh  chan agentprovider.HookEvent
 
 	ptmx    *os.File
 	cmd     *exec.Cmd
@@ -46,9 +46,8 @@ type Agentd struct {
 	stopOnce   sync.Once
 }
 
-// signalStop closes stop exactly once. It is called by the agent-exit path
-// and by taskLoop when the Core stream breaks, so a dead Core cannot orphan
-// this agentd.
+// signalStop closes stop exactly once, so a dead Core cannot orphan this
+// agentd.
 func (a *Agentd) signalStop() {
 	a.stopOnce.Do(func() {
 		close(a.stop)
@@ -62,11 +61,11 @@ func New(opts Options) *Agentd {
 		stop:   make(chan struct{}),
 		ready:  make(chan struct{}),
 		taskCh: make(chan taskResult, 1),
-		hookCh: make(chan types.HookEvent, 32),
+		hookCh: make(chan agentprovider.HookEvent, 32),
 	}
 }
 
-// Start starts the webhook server, connects to Core via gRPC, registers, and launches the agent.
+// Start starts the webhook server, registers with Core, and launches the agent.
 func (a *Agentd) Start() error {
 	a.initLogging()
 
@@ -91,7 +90,7 @@ func (a *Agentd) Start() error {
 	}
 
 	// Open the task channel before launching the agent so Core can dispatch
-	// tasks as soon as the instance reports ready (SessionStart).
+	// tasks as soon as the instance reports ready.
 	if err := a.connectTaskChannel(); err != nil {
 		a.Close()
 		return err
@@ -156,9 +155,8 @@ func (a *Agentd) Close() {
 	})
 }
 
-// hookLoop reads webhook events and dispatches them until shutdown. The
-// channel is never closed, so in-flight webhook handlers can never panic on
-// a send; they unblock via the server's done channel instead.
+// hookLoop dispatches webhook events until shutdown. The channel is never
+// closed, so a handler can never panic on a send.
 func (a *Agentd) hookLoop() {
 	for {
 		select {
@@ -171,25 +169,24 @@ func (a *Agentd) hookLoop() {
 }
 
 // handleHook handles a single webhook event from the agent process.
-func (a *Agentd) handleHook(ev types.HookEvent) {
+func (a *Agentd) handleHook(ev agentprovider.HookEvent) {
 	switch ev.Event {
-	case types.EventSessionStart:
+	case agentprovider.EventSessionStart:
 		a.reportStatus(api.StatusStarted)
 
-	case types.EventStop:
+	case agentprovider.EventStop:
 		if r, ok := a.takeTaskResult(taskResult{success: true, result: ev.Output}); ok {
 			a.taskCh <- r
 		}
 
-	case types.EventStopFailure:
+	case agentprovider.EventStopFailure:
 		if r, ok := a.takeTaskResult(taskResult{result: ev.Error}); ok {
 			a.taskCh <- r
 		}
 	}
 }
 
-// takeTaskResult claims the task slot under the lock; the taskCh send
-// happens outside it.
+// takeTaskResult claims the task slot, reporting false when no task is waiting.
 func (a *Agentd) takeTaskResult(r taskResult) (taskResult, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -200,8 +197,8 @@ func (a *Agentd) takeTaskResult(r taskResult) (taskResult, bool) {
 	return r, true
 }
 
-// initLogging opens the same log file as core and sets it as the default slog
-// handler. Failures are silent — slog stays on stderr.
+// initLogging points the default slog handler at the shared log file; on
+// failure slog stays on stderr.
 func (a *Agentd) initLogging() {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -215,8 +212,8 @@ func (a *Agentd) initLogging() {
 	slog.SetDefault(logger)
 }
 
-// reportStatus calls ReportStatus RPC with a deadline. A hung Core must not
-// block hookLoop (a full hookCh would then stall the agent's hook process).
+// reportStatus calls ReportStatus with a deadline so a hung Core cannot block
+// hookLoop.
 func (a *Agentd) reportStatus(status string) {
 	ctx, cancel := context.WithTimeout(a.ctx(), 2*time.Second)
 	defer cancel()

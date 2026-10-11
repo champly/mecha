@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/champly/mecha/pkg/api"
@@ -28,18 +29,14 @@ func (a *Agentd) connectTaskChannel() error {
 	return nil
 }
 
-// taskLoop processes tasks received from Core over the stream. Core
-// dispatches one task at a time, so tasks are handled serially: PTY writes,
-// the single task slot, and stream sends all stay race-free.
+// taskLoop processes tasks from Core serially, so PTY writes, the single task
+// slot, and stream sends all stay race-free.
 func (a *Agentd) taskLoop(stream grpc.BidiStreamingClient[api.TaskResult, api.TaskRequest]) {
 	for {
 		req, err := stream.Recv()
 		if err != nil {
-			// A broken stream means Core is gone; without this the agentd and
-			// its agent would run on as orphans (the agent keeps executing but
-			// nobody can deliver results). Exiting lets Core's respawn chain
-			// recover: a fresh Core spawns a new coordinator, and a specialist
-			// is respawned on the next ask.
+			// A broken stream means Core is gone; exit so this agentd does not
+			// linger as an orphan and Core can respawn on the next ask.
 			slog.Warn("agentd: task channel closed, exiting", "id", a.opts.ID, "err", err)
 			a.signalStop()
 			return
@@ -64,12 +61,10 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent not running"})
 		return
 	}
-	// Write the task text first, then the enter key after a short delay.
-	// Writing both in one string can cause the \r to arrive before the
-	// TUI event loop has processed the preceding text, especially for
-	// long tasks — the text lands in the input box but the enter key is
-	// consumed before the submit handler is primed.
-	if _, err := io.WriteString(a.ptmx, req.Task); err != nil {
+	// Write the text and the enter key separately: sent as one string, the \r
+	// can reach the TUI before it has processed the text, so long tasks lose
+	// the enter key and stay in the input box.
+	if _, err := io.WriteString(a.ptmx, normalizeTask(req.Task)); err != nil {
 		a.mu.Unlock()
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "write to pty: " + err.Error()})
 		return
@@ -93,8 +88,7 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 	a.hasTask = true
 	a.mu.Unlock()
 
-	// Release the task slot no matter how the wait below ends, so a later
-	// Stop hook or agent exit can never misdeliver into it.
+	// Always release the task slot, so a late hook cannot misdeliver into it.
 	defer func() {
 		a.mu.Lock()
 		a.hasTask = false
@@ -107,10 +101,15 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 	case <-a.stop:
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent exited during task"})
 	case <-time.After(api.TaskTimeout):
-		// No Stop hook ever came: the agent swallowed the task. Exiting
-		// closes the stream, which makes Core fail this task and mark the
-		// instance unhealthy so the next ask spawns a fresh agentd.
+		// No Stop hook arrived: exit so Core fails this task and respawns
+		// the agent on the next ask.
 		slog.Error("agentd: task timed out, exiting so Core can respawn", "id", a.opts.ID, "task", req.Id)
 		a.signalStop()
 	}
+}
+
+// normalizeTask collapses the task onto a single line. The task is typed as
+// keystrokes, so an embedded newline would submit it early.
+func normalizeTask(task string) string {
+	return strings.TrimSpace(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(task))
 }

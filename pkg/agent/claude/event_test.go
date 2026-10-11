@@ -3,7 +3,7 @@ package claude
 import (
 	"testing"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 )
 
 func TestParseHookEvent_Stop(t *testing.T) {
@@ -14,8 +14,8 @@ func TestParseHookEvent_Stop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventStop {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStop)
+	if e.Event != agentprovider.EventStop {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventStop)
 	}
 	if e.SessionID != "d54db35e" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "d54db35e")
@@ -33,8 +33,8 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventSessionStart {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventSessionStart)
+	if e.Event != agentprovider.EventSessionStart {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventSessionStart)
 	}
 	if e.SessionID != "abc123" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "abc123")
@@ -52,23 +52,10 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventStopFailure {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStopFailure)
+	if e.Event != agentprovider.EventStopFailure {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventStopFailure)
 	}
 	if e.Error != "rate_limit" {
 		t.Errorf("Error = %q, want %q", e.Error, "rate_limit")
-	}
-}
-
-func TestParseHookEvent_PostToolBatch(t *testing.T) {
-	raw := []byte(`{"session_id":"xyz","hook_event_name":"PostToolBatch"}`)
-	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
-
-	e, err := c.ParseHookEvent(raw)
-	if err != nil {
-		t.Fatalf("ParseHookEvent() error: %v", err)
-	}
-	if e.Event != agenttypes.EventPostToolBatch {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventPostToolBatch)
 	}
 }

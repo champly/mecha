@@ -35,8 +35,7 @@ const (
 	StatusStarted = "started"
 	StatusExited  = "exited"
 
-	// TaskTimeout bounds one task on both sides of the stream: Core stops
-	// waiting and agentd stops waiting for the hook result, so a stuck agent
+	// TaskTimeout bounds one task on both sides of the stream, so a stuck agent
 	// cannot wedge the role forever.
 	TaskTimeout = 30 * time.Minute
 )

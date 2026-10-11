@@ -96,13 +96,13 @@ func (inst *instance) markStarted() {
 	inst.agentUp = true
 	inst.mu.Unlock()
 	inst.maybeReady()
-	inst.state.Store(int32(stateRunning))
+	// Only a starting instance becomes running: a duplicate SessionStart must
+	// not clobber busy or revive a dead agent.
+	inst.state.CompareAndSwap(int32(stateStarting), int32(stateRunning))
 }
 
-// markExited marks the agent as exited, fails any in-flight task via discCh,
-// and makes the instance unhealthy. The discCh close is what unblocks execute
-// immediately; relying on the agentd's later connection close would leave the
-// task hanging until the timeout.
+// markExited makes the instance unhealthy and unblocks an in-flight execute
+// through discCh, rather than waiting for the agentd connection to close.
 func (inst *instance) markExited() {
 	inst.closeDisc()
 	inst.state.Store(int32(stateUnhealthy))
@@ -163,17 +163,16 @@ func (inst *instance) execute(ctx context.Context, task string) (*api.AskRespons
 	defer func() {
 		if timedOut {
 			// The agent never answered; keep the instance unhealthy so the
-			// next ask destroys it and respawns a fresh agentd. The stuck
-			// agent would otherwise consume every subsequent timeout too.
+			// next ask respawns it instead of reusing a stuck agent.
 			inst.state.Store(int32(stateUnhealthy))
 			return
 		}
 		inst.state.CompareAndSwap(int32(stateBusy), int32(stateRunning))
 	}()
 
-	// Drain stale results from a previous timed-out or cancelled task, or the
-	// buffer could swallow this task's result below. taskMu serializes
-	// executes, so no execute is waiting on these entries.
+	// Drop stale results from an earlier timed-out task, or the buffered
+	// channel could swallow this task's result. taskMu serializes executes,
+	// so no one else is waiting on these entries.
 drain:
 	for {
 		select {
@@ -188,16 +187,14 @@ drain:
 		return nil, fmt.Errorf("core: send task: %w", err)
 	}
 
-	// One timer for the whole wait: discarding stale results must not extend
-	// the deadline.
+	// One timer for the whole wait: skipping stale results must not extend it.
 	timer := time.NewTimer(api.TaskTimeout)
 	defer timer.Stop()
 	for {
 		select {
 		case result := <-resultCh:
 			if result.GetId() != id {
-				// Stale result from a previous timed-out or cancelled
-				// task; keep waiting for ours.
+				// Stale result from an earlier task; keep waiting.
 				continue
 			}
 			return result, nil
@@ -221,13 +218,9 @@ func (inst *instance) deliverResult(resp *api.AskResponse) {
 	if resultCh == nil {
 		return
 	}
-	// Never block: when no execute is waiting (its task timed out or was
-	// cancelled), a late result must not wedge the TaskChannel handler once
-	// the buffer fills. Results arrive in task order (agentd handles tasks
-	// serially), so a full buffer can only hold a stale result from an older
-	// task — evict it for the fresh one, which is what execute is waiting on.
-	// Dropping the fresh result here would hang execute for the whole
-	// TaskTimeout.
+	// Never block when no execute is waiting, or a late result would wedge the
+	// TaskChannel handler once the buffer fills. Results arrive in order, so a
+	// full buffer only holds a stale result: evict it for the fresh one.
 	select {
 	case resultCh <- resp:
 	default:
@@ -242,10 +235,9 @@ func (inst *instance) deliverResult(resp *api.AskResponse) {
 	}
 }
 
-// detach drops the stream, fails any in-flight task via discCh, and marks the
-// instance unhealthy so the next ask respawns it. It is a no-op when a newer
-// stream has been attached since (agentd reconnected), so a stale stream
-// teardown cannot detach its successor.
+// detach drops the stream, unblocks an in-flight execute, and marks the
+// instance unhealthy so the next ask respawns it. A stream that has already
+// been replaced by a reconnect is left alone.
 func (inst *instance) detach(stream grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]) {
 	inst.mu.Lock()
 	if inst.stream != stream {

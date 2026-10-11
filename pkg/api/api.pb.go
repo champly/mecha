@@ -223,7 +223,6 @@ type StatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	Msg           string                 `protobuf:"bytes,3,opt,name=msg,proto3" json:"msg,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -268,13 +267,6 @@ func (x *StatusRequest) GetId() string {
 func (x *StatusRequest) GetStatus() string {
 	if x != nil {
 		return x.Status
-	}
-	return ""
-}
-
-func (x *StatusRequest) GetMsg() string {
-	if x != nil {
-		return x.Msg
 	}
 	return ""
 }
@@ -524,11 +516,10 @@ const file_pkg_api_api_proto_rawDesc = "" +
 	"\x04envs\x18\x05 \x03(\v2\x1a.api.AgentConfig.EnvsEntryR\x04envs\x1a7\n" +
 	"\tEnvsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"I\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"7\n" +
 	"\rStatusRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\x12\x10\n" +
-	"\x03msg\x18\x03 \x01(\tR\x03msg\"4\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\"4\n" +
 	"\n" +
 	"AskRequest\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x12\n" +

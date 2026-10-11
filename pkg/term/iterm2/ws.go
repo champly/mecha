@@ -42,7 +42,7 @@ func requestCookie(ctx context.Context) (cookie, key string, err error) {
 type conn struct {
 	ws   *websocket.Conn
 	seq  int64
-	dead bool // guarded by ITerm2.mu; the connection failed and must be redialed on next use
+	dead bool // guarded by ITerm2.mu; redial before reuse
 }
 
 func dial(ctx context.Context) (*conn, error) {

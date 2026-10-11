@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -17,12 +17,12 @@ var defaultParams = map[string]any{
 
 // Gemini handles the Gemini CLI agent type for a specific role.
 type Gemini struct {
-	agenttypes.Base
+	agentprovider.Base
 }
 
 // New returns a Gemini agent helper.
-func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	base := agenttypes.NewBase(ctx, cfg, runtime)
+func New(ctx agentprovider.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agentprovider.Agent, error) {
+	base := agentprovider.NewBase(ctx, cfg, runtime)
 	if _, err := base.ResolveBinary(geminiBinary); err != nil {
 		return nil, err
 	}
@@ -42,15 +42,15 @@ func (g *Gemini) Prepare() error {
 	if err := g.PrepareRoleFile("GEMINI.md"); err != nil {
 		return err
 	}
-	return agenttypes.WriteJSONFile(g.settingsPath(), g.settings())
+	return agentprovider.WriteJSONFile(g.settingsPath(), g.settings())
 }
 
 func (g *Gemini) settings() map[string]any {
-	webhookCmd := agenttypes.WebhookCommand(g.MechaBinary, g.WebhookAddr)
+	webhookCmd := agentprovider.WebhookCommand(g.MechaBinary, g.WebhookAddr)
 
 	return map[string]any{
 		"hooks": map[string]any{
-			agenttypes.EventSessionStart: []any{
+			agentprovider.EventSessionStart: []any{
 				map[string]any{
 					"matcher": "startup",
 					"hooks": []any{

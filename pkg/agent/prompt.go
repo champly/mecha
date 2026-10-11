@@ -2,63 +2,12 @@ package agent
 
 import (
 	"bytes"
-	"fmt"
 	"log/slog"
 	"strings"
 	"text/template"
 
-	"github.com/champly/mecha/pkg/agent/claude"
-	"github.com/champly/mecha/pkg/agent/codebuddy"
-	"github.com/champly/mecha/pkg/agent/codex"
-	"github.com/champly/mecha/pkg/agent/gemini"
-	"github.com/champly/mecha/pkg/agent/pi"
-	"github.com/champly/mecha/pkg/agent/types"
 	"github.com/champly/mecha/pkg/config"
 )
-
-var registry = map[string]types.Factory{}
-
-func init() {
-	Register("claude", claude.New)
-	Register("codebuddy", codebuddy.New)
-	Register("codex", codex.New)
-	Register("gemini", gemini.New)
-	Register("pi", pi.New)
-}
-
-// ValidateAgentType reports whether typ is a registered agent type; pass it
-// to config.LoadConfig.
-func ValidateAgentType(typ string) bool {
-	_, ok := registry[typ]
-	return ok
-}
-
-// Register registers an agent type factory.
-func Register(name string, factory types.Factory) {
-	registry[name] = factory
-}
-
-// NewFromConfig creates an Agent from pre-resolved configuration.
-// Used by agentd when receiving config from Core over gRPC.
-func NewFromConfig(workspace, prompt, roleName, webhookAddr string, agentCfg config.AgentConfig, mechaBinary string) (types.Agent, error) {
-	factory, ok := registry[agentCfg.Type]
-	if !ok {
-		return nil, fmt.Errorf("agent: unknown agent type %q", agentCfg.Type)
-	}
-
-	ctx := types.AgentContext{
-		Workspace:   workspace,
-		RoleDir:     config.RoleDir(workspace, roleName),
-		Prompt:      prompt,
-		WebhookAddr: webhookAddr,
-	}
-
-	runtime := config.Runtime{
-		MechaBinary: mechaBinary,
-	}
-
-	return factory(ctx, agentCfg, runtime)
-}
 
 const promptTemplate = `<your_assigned_role>
 {{.Role.Prompt -}}

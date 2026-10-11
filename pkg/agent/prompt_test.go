@@ -7,24 +7,16 @@ import (
 	"github.com/champly/mecha/pkg/config"
 )
 
-func TestNewFromConfigUnknownType(t *testing.T) {
-	_, err := NewFromConfig("/ws", "prompt", "lead", "127.0.0.1:1",
-		config.AgentConfig{Type: "nope"}, "mecha")
-	if err == nil {
-		t.Fatal("expected error for unknown agent type, got nil")
-	}
-}
-
 func TestRenderPrompt_Coordinator(t *testing.T) {
 	role := config.Role{
 		Name:          "coordinator",
-		Prompt:        "你是一个项目协调者。",
+		Prompt:        "You are the project coordinator.",
 		IsCoordinator: true,
 	}
 	allRoles := []config.Role{
-		{Name: "coordinator", IsCoordinator: true, Prompt: "协调者"},
-		{Name: "reviewer", Prompt: "负责代码审查。"},
-		{Name: "implementer", Prompt: "负责写代码。"},
+		{Name: "coordinator", IsCoordinator: true, Prompt: "Coordinator."},
+		{Name: "reviewer", Prompt: "Reviews code."},
+		{Name: "implementer", Prompt: "Writes code."},
 	}
 
 	runtime := config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
@@ -48,7 +40,7 @@ func TestRenderPrompt_Coordinator(t *testing.T) {
 	if !strings.Contains(content, "mecha ask") {
 		t.Errorf("should mention mecha ask")
 	}
-	if !strings.Contains(content, "你是一个项目协调者。") {
+	if !strings.Contains(content, "You are the project coordinator.") {
 		t.Errorf("missing original prompt")
 	}
 }
@@ -56,7 +48,7 @@ func TestRenderPrompt_Coordinator(t *testing.T) {
 func TestRenderPrompt_Specialist(t *testing.T) {
 	role := config.Role{
 		Name:   "reviewer",
-		Prompt: "你是一个代码审查者。",
+		Prompt: "You are a code reviewer.",
 	}
 
 	runtime := config.Runtime{MechaBinary: "mecha", Addr: "127.0.0.1:12345"}
@@ -74,7 +66,7 @@ func TestRenderPrompt_Specialist(t *testing.T) {
 	if strings.Contains(content, "<available_roles>") {
 		t.Errorf("specialist should not have <available_roles>")
 	}
-	if !strings.Contains(content, "你是一个代码审查者。") {
+	if !strings.Contains(content, "You are a code reviewer.") {
 		t.Errorf("missing original prompt")
 	}
 }

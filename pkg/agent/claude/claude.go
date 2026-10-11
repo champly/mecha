@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -22,12 +22,12 @@ var (
 
 // Claude handles the Claude Code agent type for a specific role.
 type Claude struct {
-	agenttypes.Base
+	agentprovider.Base
 }
 
 // New returns a Claude agent helper.
-func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	base := agenttypes.NewBase(ctx, cfg, runtime)
+func New(ctx agentprovider.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agentprovider.Agent, error) {
+	base := agentprovider.NewBase(ctx, cfg, runtime)
 	if _, err := base.ResolveBinary(claudeBinary); err != nil {
 		return nil, err
 	}
@@ -47,15 +47,15 @@ func (c *Claude) Prepare() error {
 	if err := c.PrepareRoleFile("CLAUDE.md"); err != nil {
 		return err
 	}
-	return agenttypes.WriteJSONFile(c.settingsPath(), c.settings())
+	return agentprovider.WriteJSONFile(c.settingsPath(), c.settings())
 }
 
 func (c *Claude) settings() map[string]any {
 	hookEvents := map[string]any{}
 	for _, event := range []string{
-		agenttypes.EventSessionStart,
-		agenttypes.EventStop,
-		agenttypes.EventStopFailure,
+		agentprovider.EventSessionStart,
+		agentprovider.EventStop,
+		agentprovider.EventStopFailure,
 	} {
 		hookEvents[event] = []any{
 			map[string]any{

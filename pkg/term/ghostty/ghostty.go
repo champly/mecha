@@ -25,11 +25,9 @@ type Ghostty struct {
 	terminals  driver.Chain
 }
 
-// New creates a new Ghostty provider. It pins the anchor to the terminal
-// this process runs in — captured now, at process start — so spawned panes
-// stay in the coordinator's window even when the user has focused another
-// window or tab before the first Spawn. When the anchor cannot be resolved,
-// Spawn falls back to the front window at spawn time.
+// New creates a new Ghostty provider, pinning the anchor to this process's
+// terminal at startup so spawned panes stay in the coordinator's window. When
+// the anchor cannot be resolved, Spawn falls back to the front window.
 func New() (driver.Backend, error) {
 	g := &Ghostty{}
 	ctx, cancel := context.WithTimeout(context.Background(), anchorTimeout)
@@ -92,8 +90,7 @@ func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	_, err := runAppleScript(ctx, closeScript(h.PaneID()))
-	// Remove the id even when the close failed: a terminal whose process
-	// already exited must not linger in the chain and break later spawns.
+	// Drop the id even on failure, so a dead terminal cannot break later spawns.
 	g.terminals.Remove(h.PaneID())
 	return err
 }

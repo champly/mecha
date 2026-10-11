@@ -278,7 +278,8 @@ taskLoop: stream.Recv() 出错 → signalStop()（视为 Core 已死，避免孤
 handleTask（串行）:
   1. 等 <-ready（TUI 就绪）或 <-stop（回 "agent exited during task"）
   2. ptmx == nil → "agent not running"
-  3. 分两次写 PTY：先写 task 文本，sleep 100ms，再写 "\r"
+  3. 分两次写 PTY：先写 task 文本（normalizeTask 先把 CR/LF 折成空格、trim 成单行，
+     避免多行任务在 TUI 里提前提交），sleep 100ms，再写 "\r"
      （一次写入时 \r 可能先于文本被 TUI 事件循环处理，长任务回车被吞）
   4. select：
      ├── taskCh 收到 hook 结果 → 回 TaskResult{Id, Success, Result}
@@ -427,7 +428,7 @@ message AgentConfig {
   google.protobuf.Struct params = 4;   // yaml map[string]any → Struct
   map<string, string> envs = 5;
 }
-message StatusRequest { string id = 1; string status = 2; string msg = 3; }
+message StatusRequest { string id = 1; string status = 2; }
 message AskRequest    { string role = 1; string task = 2; }
 message AskResponse   { string id = 1; bool success = 2; string result = 3; }
 message TaskRequest   { string id = 1; string task = 2; }
@@ -436,7 +437,7 @@ message TaskResult    { string id = 1; bool success = 2; string result = 3; }
 
 **实现细节：**
 
-- 状态常量仅 `started` / `exited`；`msg` 字段目前未被使用
+- 状态常量仅 `started` / `exited`
 - `ReportStatus` 对未知 id 返回成功（空响应），不报错
 - 任务超时 `TaskTimeout = 30min` 为协议常量，Core 与 agentd 两侧共用
 - 无 TLS、无鉴权，监听仅 127.0.0.1
@@ -466,7 +467,7 @@ Agent 触发 hook
                  └── StopFailure  → taskCh ← {failure, error} → TaskResult
 ```
 
-**统一事件结构（`pkg/agent/types`）：**
+**统一事件结构（`pkg/agent/provider`）：**
 
 ```go
 type HookEvent struct {
@@ -477,7 +478,7 @@ type HookEvent struct {
 }
 ```
 
-事件常量 4 个：`SessionStart` / `PostToolBatch` / `Stop` / `StopFailure`。其中 `PostToolBatch` 仅 claude 的 eventMap 能识别，**没有任何 agent 的 hook 配置注册它**，agentd 的 handleHook 也不处理。
+事件常量 3 个：`SessionStart` / `Stop` / `StopFailure`，agentd 的 handleHook 仅处理这三种。
 
 统一解析框架 `ParseHook(prefix, raw, eventMap, extract)`：读 `hook_event_name` 查 eventMap（未知事件报错）→ 提取顶层 `session_id` → 调 agent 自定义的 extract 填 output/error。
 
@@ -519,15 +520,15 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 
 注册表在 `pkg/agent` 的 `init()` 中注册 5 种 type：`claude` / `codebuddy` / `codex` / `gemini` / `pi`。
 
-**共享工具（`pkg/agent/types`）：**
+**共享工具（`pkg/agent/provider`，shell 引号工具见 `pkg/shellquote`）：**
 
 - `MergeMap(defaults, user)`：defaults 为底、user 覆盖，返回新 map
 - `BuildArgs(user, defaults)`：合并后按 key 排序输出 `--key value`；**bool true → 裸 `--key`；bool false → 整个省略**（pflag 风格 CLI 中 `--key false` 会把 "false" 漏成位置参数）
 - `BuildEnv(user, defaults)`：三层合并，后层覆盖前层——`os.Environ()` → defaults → user；排序输出。继承进程环境保证 `TERM`/`COLORTERM`/`HOME`/`PATH`/API key 正常传递
 - `ResolveBinary`：`cfg.Binary` 或默认 binary，factory 时即 `exec.LookPath` 校验存在性
 - `WriteJSONFile`：临时文件 + rename 原子写
-- `QuoteShell`：白名单字符（`[A-Za-z0-9_./:@%+=,-]`）不引用，否则单引号包裹
-- `WebhookCommand(binary, addr)` → `<binary> webhook --addr <addr>`（均过 QuoteShell）
+- `shellquote.Quote`（`pkg/shellquote`，agent 层与终端层共用，无内部依赖）：白名单字符（`[A-Za-z0-9_./:@%+=,-]`）不引用，否则单引号包裹
+- `WebhookCommand(binary, addr)` → `<binary> webhook --addr <addr>`（均过 `shellquote.Quote`）
 
 ### 7.2 五种 agent 对照
 
@@ -541,7 +542,7 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | **RoleDir** | Workspace | **RoleDir** |
 | hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
 | 注册的 hook 事件 | SessionStart / Stop / StopFailure | SessionStart / Stop / StopFailure | SessionStart（matcher startup）/ **AfterAgent**（matcher `*`） | SessionStart / Stop / StopFailure | SessionStart（startup）/ Stop（`*`） |
-| 事件映射 | 四事件同名映射（含 PostToolBatch） | 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
+| 事件映射 | 三事件同名映射 | 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
 | Stop output 字段 | `last_assistant_message` | `last_assistant_message` | `prompt_response` | `last_assistant_message` | `last_assistant_message` |
 | StopFailure error 字段 | `error_type` 优先，否则 `error` | 同 claude | —（无此事件） | 同 claude | — |
 
@@ -585,7 +586,7 @@ type Handle interface {
 
 **driver.Chain**：`[]string` 栈，按分割顺序记录已 spawn pane 的原生 ID；后续分割以 `Last()` 为目标；Kill 时无论成败都 Remove（防 stale ID 成为后续分割目标）。
 
-**BuildCommand**：每个 arg 过 `QuoteShell` 后空格连接；`WorkDir` 非空时前置 `cd <dir> && `。
+**BuildCommand**：每个 arg 过 `shellquote.Quote` 后空格连接；`WorkDir` 非空时前置 `cd <dir> && `。
 
 ### 8.2 后端实现对照
 
@@ -644,6 +645,5 @@ Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal
 | 无 resume | 未接入 agent 会话恢复机制 |
 | mecha 被 SIGKILL | coordinator 与 specialist pane 残留 |
 | TaskChannel 不重连 | agentd 侧流断开即 signalStop 退出，实例靠 Core 下次 ask 重建 |
-| PostToolBatch 未启用 | 常量与 claude eventMap 已定义，但无 hook 注册、handleHook 不处理 |
 | 任务超时的体验 | 30min 超时后实例标记 unhealthy 重建，agent 内可能仍在生成 |
 | 无鉴权 | 所有监听仅绑 127.0.0.1，本机同用户任意进程可调用 Ask（见 README 安全说明） |

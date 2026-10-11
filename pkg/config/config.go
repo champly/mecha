@@ -28,15 +28,14 @@ func RoleDir(workspace, roleName string) string {
 	return filepath.Join(workspace, configDirName, rolesDirName, roleName)
 }
 
-// MechaBinary is the default mecha binary path for webhook callbacks; Core
-// copies it into Runtime.MechaBinary at startup. Override via ldflags:
+// MechaBinary is the default mecha binary path, copied into Runtime.MechaBinary
+// at startup. Override via ldflags:
 //
 //	-X github.com/champly/mecha/pkg/config.MechaBinary=/custom/path
 var MechaBinary = "mecha"
 
-// Runtime holds values that are determined at startup and needed throughout
-// the agent lifecycle. It is passed explicitly to avoid hidden coupling
-// between core, agent, and provider packages.
+// Runtime holds values resolved at startup and passed explicitly to avoid
+// hidden coupling between core, agent, and provider packages.
 type Runtime struct {
 	MechaBinary string // path to mecha binary (from config.MechaBinary by default)
 	Addr        string // Core gRPC listen address (host:port)
@@ -51,8 +50,8 @@ func MechaDir() (string, error) {
 	return filepath.Join(home, configDirName), nil
 }
 
-// LogPath returns the log file path for a workspace, matching the convention
-// used by both core and agentd so all process logs land in the same file.
+// LogPath returns the log file path for a workspace, shared by core and agentd
+// so all process logs land in one file.
 func LogPath(workspace string) (string, error) {
 	dir, err := MechaDir()
 	if err != nil {
@@ -66,9 +65,8 @@ func LogPath(workspace string) (string, error) {
 	return filepath.Join(logDir, time.Now().Format(time.DateOnly)+".log"), nil
 }
 
-// NewFileLogger opens the log file for workspace and returns a configured
-// slog.Logger that writes structured text logs to it. Both core and agentd
-// use this so all process logs land in the same file.
+// NewFileLogger opens the workspace log file and returns a slog.Logger writing
+// structured text logs to it.
 func NewFileLogger(workspace string) (*slog.Logger, *os.File, error) {
 	path, err := LogPath(workspace)
 	if err != nil {
@@ -135,10 +133,8 @@ type Config struct {
 	Profiles map[string]ProfileConfig `yaml:"profiles"`
 }
 
-// LoadConfig reads YAML config from path, validates it, and completes it with
-// defaults. If path is empty, ~/.mecha/config.yaml is used. validType
-// validates agent type strings; pass agent.ValidateAgentType to reject
-// unknown types at startup.
+// LoadConfig reads, validates, and completes the YAML config at path
+// (~/.mecha/config.yaml when empty). validType rejects unknown agent types.
 func LoadConfig(path string, validType func(string) bool) (Config, error) {
 	c, err := parseConfigFile(path)
 	if err != nil {
@@ -177,9 +173,8 @@ func parseConfigFile(path string) (Config, error) {
 	return c, nil
 }
 
-// validate checks basic consistency: unique agent names, resolvable agent
-// references, and exactly one coordinator role per profile. validType
-// validates agent type strings (nil skips).
+// validate checks unique agent names, resolvable agent references, and exactly
+// one coordinator role per profile. validType validates agent types (nil skips).
 func (c Config) validate(validType func(string) bool) error {
 	agentNames := make(map[string]struct{}, len(c.Agents))
 	for _, agent := range c.Agents {
@@ -261,8 +256,8 @@ func (c Config) validate(validType func(string) bool) error {
 	return nil
 }
 
-// complete normalizes fields and resolves each role's agent config in place.
-// Must be called once, immediately after validate, before concurrent use.
+// complete normalizes fields and resolves each role's agent config. It must run
+// once, right after validate, before concurrent use.
 func (c *Config) complete() {
 	c.Agent = strings.TrimSpace(c.Agent)
 	c.Profile = strings.TrimSpace(c.Profile)
@@ -323,7 +318,7 @@ func (c *Config) complete() {
 
 			role.Agent = resolved
 		}
-		// Write back: a future append to Roles would reallocate only the copy.
+		// Write back, since the range copy is discarded.
 		c.Profiles[profileName] = profile
 	}
 }

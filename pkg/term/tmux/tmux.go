@@ -23,11 +23,9 @@ type Tmux struct {
 	panes      driver.Chain
 }
 
-// New creates a new Tmux provider. The anchor pane is pinned to the pane
-// this process runs in (TMUX_PANE, i.e. the coordinator's pane), so spawned
-// panes stay in the coordinator's window even when the user has switched to
-// another window before the first Spawn. When TMUX_PANE is empty, Spawn
-// falls back to resolving the current pane lazily.
+// New creates a new Tmux provider, pinning the anchor to this process's pane
+// (TMUX_PANE) so spawned panes stay in the coordinator's window. Spawn falls
+// back to resolving the current pane when TMUX_PANE is empty.
 func New() (driver.Backend, error) {
 	return &Tmux{anchorPane: os.Getenv("TMUX_PANE")}, nil
 }
@@ -62,8 +60,8 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 
 	if cmd := driver.BuildCommand(spec); cmd != "" {
 		if err := sendLiteral(ctx, paneID, cmd); err != nil {
-			// The split already happened; destroy the pane, keep it in the
-			// chain only when the kill fails.
+			// The split already happened; destroy the pane, tracking it only
+			// when that fails.
 			if _, kerr := tmux(ctx, "kill-pane", "-t", paneID); kerr != nil {
 				t.panes.Push(paneID)
 			}
@@ -85,8 +83,7 @@ func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	_, err := tmux(ctx, "kill-pane", "-t", h.PaneID())
-	// Remove the id even when the kill failed: a pane whose process already
-	// exited must not linger in the chain and break later spawns.
+	// Drop the id even on failure, so a dead pane cannot break later spawns.
 	t.panes.Remove(h.PaneID())
 	return err
 }

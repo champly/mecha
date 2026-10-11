@@ -1,16 +1,14 @@
 // Package pi implements the Pi coding agent type for mecha.
 //
-// Pi is an open-source terminal-native coding agent (pi.dev). Unlike Claude
-// Code, Pi has no built-in permission system, so no --dangerously-skip-permissions
-// or -y flag is needed. Pi discovers .pi/settings.json from its working
-// directory and walks parent directories for AGENTS.md/CLAUDE.md context files.
+// Pi (pi.dev) has no built-in permission system, so no skip-permissions flag
+// is needed.
 package pi
 
 import (
 	"os/exec"
 	"path/filepath"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -18,12 +16,12 @@ const piBinary = "pi"
 
 // Pi handles the Pi coding agent type for a specific role.
 type Pi struct {
-	agenttypes.Base
+	agentprovider.Base
 }
 
 // New returns a Pi agent helper.
-func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	base := agenttypes.NewBase(ctx, cfg, runtime)
+func New(ctx agentprovider.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agentprovider.Agent, error) {
+	base := agentprovider.NewBase(ctx, cfg, runtime)
 	if _, err := base.ResolveBinary(piBinary); err != nil {
 		return nil, err
 	}
@@ -43,17 +41,16 @@ func (p *Pi) Prepare() error {
 	if err := p.PrepareRoleFile("PI.md"); err != nil {
 		return err
 	}
-	return agenttypes.WriteJSONFile(p.settingsPath(), p.settings())
+	return agentprovider.WriteJSONFile(p.settingsPath(), p.settings())
 }
 
 func (p *Pi) settings() map[string]any {
-	// Pi's hook command is a single shell command string (unlike Claude Code's
-	// separate command+args array). Use shell quoting for paths with spaces.
-	webhookCmd := agenttypes.WebhookCommand(p.MechaBinary, p.WebhookAddr)
+	// Pi hooks take a single shell command string, so quote paths with spaces.
+	webhookCmd := agentprovider.WebhookCommand(p.MechaBinary, p.WebhookAddr)
 
 	return map[string]any{
 		"hooks": map[string]any{
-			agenttypes.EventSessionStart: []any{
+			agentprovider.EventSessionStart: []any{
 				map[string]any{
 					"matcher": "startup",
 					"hooks": []any{
@@ -64,7 +61,7 @@ func (p *Pi) settings() map[string]any {
 					},
 				},
 			},
-			agenttypes.EventStop: []any{
+			agentprovider.EventStop: []any{
 				map[string]any{
 					"matcher": "*",
 					"hooks": []any{
@@ -81,9 +78,8 @@ func (p *Pi) settings() map[string]any {
 
 // Cmd builds the *exec.Cmd for launching the Pi agent.
 //
-// Pi discovers .pi/settings.json from its working directory, which is set
-// to the role directory (like Gemini). The workspace is still accessible
-// via parent-directory traversal for AGENTS.md/CLAUDE.md context files.
+// Pi reads .pi/settings.json from its working directory, so the role directory
+// is the CWD; the workspace stays reachable via parent-directory traversal.
 func (p *Pi) Cmd() *exec.Cmd {
 	cmd := p.NewAgentCmd(piBinary, nil, nil)
 	cmd.Args = append(cmd.Args, "--append-system-prompt", p.Prompt)

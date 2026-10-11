@@ -9,19 +9,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 )
 
 func TestWebhookServerHandle(t *testing.T) {
-	ch := make(chan types.HookEvent, 1)
+	ch := make(chan agentprovider.HookEvent, 1)
 	srv, err := NewWebhookServer(ch)
 	if err != nil {
 		t.Fatalf("NewWebhookServer: %v", err)
 	}
 	defer srv.Close()
 
-	srv.SetParseFunc(func(raw []byte) (types.HookEvent, error) {
-		var ev types.HookEvent
+	srv.SetParseFunc(func(raw []byte) (agentprovider.HookEvent, error) {
+		var ev agentprovider.HookEvent
 		return ev, json.Unmarshal(raw, &ev)
 	})
 
@@ -37,8 +37,8 @@ func TestWebhookServerHandle(t *testing.T) {
 
 	select {
 	case ev := <-ch:
-		if ev.Event != types.EventSessionStart {
-			t.Errorf("event = %q, want %q", ev.Event, types.EventSessionStart)
+		if ev.Event != agentprovider.EventSessionStart {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventSessionStart)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("event not delivered")
@@ -46,15 +46,15 @@ func TestWebhookServerHandle(t *testing.T) {
 }
 
 func TestWebhookServerHandleParseFailure(t *testing.T) {
-	ch := make(chan types.HookEvent, 1)
+	ch := make(chan agentprovider.HookEvent, 1)
 	srv, err := NewWebhookServer(ch)
 	if err != nil {
 		t.Fatalf("NewWebhookServer: %v", err)
 	}
 	defer srv.Close()
 
-	srv.SetParseFunc(func(raw []byte) (types.HookEvent, error) {
-		return types.HookEvent{}, fmt.Errorf("unexpected field %q", "hook_event_name")
+	srv.SetParseFunc(func(raw []byte) (agentprovider.HookEvent, error) {
+		return agentprovider.HookEvent{}, fmt.Errorf("unexpected field %q", "hook_event_name")
 	})
 
 	resp, err := http.Post("http://"+srv.Addr()+"/webhook", "application/json",
@@ -93,13 +93,13 @@ func TestTruncateBody(t *testing.T) {
 // A handler blocked on a full event channel must unblock with 503 once the
 // server closes, instead of hanging the agent's hook process forever.
 func TestWebhookServerCloseUnblocksHandler(t *testing.T) {
-	ch := make(chan types.HookEvent) // unbuffered, no reader: the handler blocks
+	ch := make(chan agentprovider.HookEvent) // unbuffered, no reader: the handler blocks
 	srv, err := NewWebhookServer(ch)
 	if err != nil {
 		t.Fatalf("NewWebhookServer: %v", err)
 	}
-	srv.SetParseFunc(func(raw []byte) (types.HookEvent, error) {
-		return types.HookEvent{Event: types.EventStop}, nil
+	srv.SetParseFunc(func(raw []byte) (agentprovider.HookEvent, error) {
+		return agentprovider.HookEvent{Event: agentprovider.EventStop}, nil
 	})
 
 	status := make(chan int, 1)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -28,7 +28,7 @@ func testRuntime() config.Runtime {
 }
 
 func testNew(workspace, roleDir, prompt string) *Pi {
-	ctx := agenttypes.AgentContext{
+	ctx := agentprovider.AgentContext{
 		Workspace:   workspace,
 		RoleDir:     roleDir,
 		Prompt:      prompt,
@@ -38,7 +38,7 @@ func testNew(workspace, roleDir, prompt string) *Pi {
 	return a.(*Pi)
 }
 
-var _ agenttypes.Agent = (*Pi)(nil)
+var _ agentprovider.Agent = (*Pi)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestWritePrompt(t *testing.T) {
-	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
+	content := "<your_assigned_role>\nYou are a test role.\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
@@ -76,7 +76,7 @@ func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := agenttypes.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
+	if err := agentprovider.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
 		t.Fatalf("WriteJSONFile() error: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestWriteSettings(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
+	prompt := "<your_assigned_role>\nCoordinator\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 
@@ -144,8 +144,8 @@ func TestParseHookEvent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		if ev.Event != agenttypes.EventSessionStart {
-			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventSessionStart)
+		if ev.Event != agentprovider.EventSessionStart {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventSessionStart)
 		}
 		if ev.SessionID != "abc123" {
 			t.Errorf("session_id = %q, want %q", ev.SessionID, "abc123")
@@ -157,8 +157,8 @@ func TestParseHookEvent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		if ev.Event != agenttypes.EventStop {
-			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventStop)
+		if ev.Event != agentprovider.EventStop {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventStop)
 		}
 		if ev.Output != "done!" {
 			t.Errorf("output = %q, want %q", ev.Output, "done!")

@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// launchCoordinator starts the coordinator agentd as a foreground child
-// process, waits until it is ready, and blocks until it exits.
+// launchCoordinator starts the coordinator agentd in the foreground and
+// blocks until it exits.
 func (c *Core) launchCoordinator(ctx context.Context) error {
 	roleName := c.coordinatorRole()
 	if roleName == "" {
@@ -38,8 +38,8 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 		return fmt.Errorf("core: start coordinator: %w", err)
 	}
 
-	// Never let the coordinator outlive Core: kill it when the context is
-	// cancelled, and reap it on startup failure so it is never orphaned.
+	// Never let the coordinator outlive Core: kill it on context cancellation
+	// and reap it on startup failure.
 	stopKill := context.AfterFunc(ctx, func() {
 		_ = cmd.Process.Kill()
 	})

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -19,12 +19,12 @@ var defaultParams = map[string]any{
 
 // Codex handles the Codex CLI agent type for a specific role.
 type Codex struct {
-	agenttypes.Base
+	agentprovider.Base
 }
 
 // New returns a Codex agent helper.
-func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	base := agenttypes.NewBase(ctx, cfg, runtime)
+func New(ctx agentprovider.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agentprovider.Agent, error) {
+	base := agentprovider.NewBase(ctx, cfg, runtime)
 	if _, err := base.ResolveBinary(codexBinary); err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (c *Codex) configArgs() []string {
 	args := []string{
 		"--config", "model_instructions_file=" + strconv.Quote(c.agentsMdPath()),
 	}
-	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
+	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
 		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(c.MechaBinary, hookArgs))
 	}
 	return args

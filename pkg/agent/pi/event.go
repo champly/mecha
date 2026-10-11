@@ -1,23 +1,21 @@
 package pi
 
 import (
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 )
 
 // eventMap converts Pi's hook_event_name values to internal event constants.
-// Pi does not have a StopFailure event (like Gemini); agent process crashes
-// are caught by agentd's waitAgent.
+// Pi has no StopFailure event; process crashes are caught by agentd.
 var eventMap = map[string]string{
-	"SessionStart": agenttypes.EventSessionStart,
-	"Stop":         agenttypes.EventStop,
+	"SessionStart": agentprovider.EventSessionStart,
+	"Stop":         agentprovider.EventStop,
 }
 
 // ParseHookEvent parses raw Pi hook JSON into a unified HookEvent.
-// Pi's hook format follows the same pattern as Claude Code (hook_event_name field).
-func (p *Pi) ParseHookEvent(raw []byte) (agenttypes.HookEvent, error) {
-	return agenttypes.ParseHook("pi", raw, eventMap, func(m map[string]any, e *agenttypes.HookEvent) {
+func (p *Pi) ParseHookEvent(raw []byte) (agentprovider.HookEvent, error) {
+	return agentprovider.ParseHook("pi", raw, eventMap, func(m map[string]any, e *agentprovider.HookEvent) {
 		switch e.Event {
-		case agenttypes.EventStop:
+		case agentprovider.EventStop:
 			if msg, ok := m["last_assistant_message"].(string); ok && msg != "" {
 				e.Output = msg
 			}

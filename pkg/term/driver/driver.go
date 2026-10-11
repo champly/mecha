@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	"github.com/champly/mecha/pkg/shellquote"
 )
 
 // Backend is the contract that all terminal providers implement.
@@ -86,21 +86,19 @@ func (c *Chain) Remove(id string) {
 	}
 }
 
-// BuildCommand builds a shell command line from spec. When spec.WorkDir is
-// set, the command is prefixed with `cd <dir> &&` so backends that only send
-// text into a shell (iTerm2, Ghostty) honor it; tmux also sets the pane cwd
-// directly via split-window -c.
+// BuildCommand builds a shell command line from spec, prefixing `cd <dir> &&`
+// when WorkDir is set so backends that only type into a shell honor it.
 func BuildCommand(spec Spec) string {
 	if len(spec.Command) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(spec.Command))
 	for _, arg := range spec.Command {
-		parts = append(parts, agenttypes.QuoteShell(arg))
+		parts = append(parts, shellquote.Quote(arg))
 	}
 	cmd := strings.Join(parts, " ")
 	if spec.WorkDir != "" {
-		cmd = "cd " + agenttypes.QuoteShell(spec.WorkDir) + " && " + cmd
+		cmd = "cd " + shellquote.Quote(spec.WorkDir) + " && " + cmd
 	}
 	return cmd
 }

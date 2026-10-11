@@ -65,14 +65,14 @@ func New(workspace string, cfg config.Config) (*Core, error) {
 	}, nil
 }
 
-// Logger returns the core's logger for slog.SetDefault at the entry point.
+// Logger returns the core's logger.
 func (c *Core) Logger() *slog.Logger {
 	return c.logger
 }
 
-// resolveMechaBinary returns the mecha binary path. It defaults to the
-// current executable so hooks and agentd spawns don't depend on PATH;
-// config.MechaBinary (ldflags) wins when overridden.
+// resolveMechaBinary returns the mecha binary path: config.MechaBinary (set
+// via ldflags) wins, otherwise the current executable is used so spawned
+// hooks do not depend on PATH.
 func resolveMechaBinary() string {
 	if config.MechaBinary != "mecha" {
 		return config.MechaBinary
@@ -84,8 +84,8 @@ func resolveMechaBinary() string {
 	return exe
 }
 
-// Start starts the gRPC server and runs the coordinator in the foreground,
-// blocking until the coordinator exits. Resources are always released.
+// Start starts the gRPC server and runs the coordinator in the foreground
+// until it exits.
 func (c *Core) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -109,9 +109,8 @@ func (c *Core) Start(ctx context.Context) error {
 	return err
 }
 
-// shutdown kills all specialist panes, then stops the gRPC server. Panes are
-// killed before GracefulStop: closing the task streams is what unblocks
-// in-flight executes, which is what lets GracefulStop return promptly.
+// shutdown kills all specialist panes, then stops the gRPC server. Panes go
+// first so in-flight task streams close and GracefulStop can return promptly.
 func (c *Core) shutdown() {
 	c.killAllPanes()
 
@@ -128,8 +127,7 @@ func (c *Core) shutdown() {
 		<-stopped
 	}
 
-	// A pane spawned while the server was stopping has no live stream, so
-	// its agentd exits on its own; kill it anyway so nothing lingers.
+	// Kill panes spawned while stopping so nothing lingers.
 	c.killAllPanes()
 
 	c.logger.Info("core shutdown complete")
@@ -141,9 +139,8 @@ func (c *Core) shutdown() {
 	}
 }
 
-// killAllPanes kills every specialist pane, each bounded by paneKillTimeout.
-// Kills run serially: every backend holds its own lock for the whole Kill, so
-// concurrent calls would queue on the backend mutex anyway.
+// killAllPanes kills every specialist pane serially, each bounded by
+// paneKillTimeout (backends serialize on their own lock anyway).
 func (c *Core) killAllPanes() {
 	for _, inst := range c.registry.all() {
 		pane := inst.pane()

@@ -23,13 +23,10 @@ type ITerm2 struct {
 	sessions driver.Chain
 }
 
-// New creates a new ITerm2 provider. It dials the iTerm2 WebSocket
-// immediately rather than lazily on first use. The anchor session is pinned
-// to the session this process runs in (ITERM_SESSION_ID, i.e. the
-// coordinator's session), so spawned panes stay in the coordinator's tab
-// even when the user has focused another tab or window before the first
-// Spawn. When ITERM_SESSION_ID is unavailable, Spawn falls back to the
-// active session.
+// New creates a new ITerm2 provider and dials the WebSocket immediately. The
+// anchor session is pinned to this process's session (ITERM_SESSION_ID) so
+// spawned panes stay in the coordinator's tab; Spawn falls back to the active
+// session when it is unavailable.
 func New() (driver.Backend, error) {
 	c, err := dial(context.Background())
 	if err != nil {
@@ -41,9 +38,8 @@ func New() (driver.Backend, error) {
 // ownSession returns the id of the iTerm2 session this process runs in,
 // parsed from ITERM_SESSION_ID ("w0t0p0:GUID"). Empty when unavailable.
 func ownSession() string {
-	id := os.Getenv("ITERM_SESSION_ID")
-	if i := strings.LastIndex(id, ":"); i >= 0 {
-		return id[i+1:]
+	if _, guid, ok := strings.CutLast(os.Getenv("ITERM_SESSION_ID"), ":"); ok {
+		return guid
 	}
 	return ""
 }
@@ -107,11 +103,11 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 		if spec.Role != "" {
 			cmd = badgeCommand(spec.Role) + " && " + cmd
 		}
-		// \n alone causes line feed without carriage return.
-		// \r\n gives the terminal both: cursor to column 0 + down one line.
+		// \r\n returns the cursor to column 0 and moves down a line; \n alone
+		// does not.
 		if err := p.conn.sendText(ctx, sessionID, cmd+"\r\n"); err != nil {
-			// The split already happened; close the session, keep it in the
-			// chain only when the close fails.
+			// The split already happened; close the session, tracking it only
+			// when that fails.
 			if cerr := p.closeOrphan(ctx, sessionID); cerr != nil {
 				p.sessions.Push(sessionID)
 			}
@@ -146,9 +142,7 @@ func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
 
 	paneID := h.PaneID()
 	err := p.conn.closeSessions(ctx, paneID)
-	// Remove the id even when the close failed: a pane whose process already
-	// exited refuses to close, and a stale id in the chain would break every
-	// subsequent spawn as a split target.
+	// Drop the id even on failure, so a stale session cannot break later splits.
 	p.sessions.Remove(paneID)
 	if p.sessions.Empty() {
 		p.conn.close()

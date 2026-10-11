@@ -143,7 +143,7 @@ func TestDeliverResultNeverBlocks(t *testing.T) {
 	go func() {
 		defer close(done)
 		// One more than the buffer holds, with no execute draining.
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			inst.deliverResult(&api.AskResponse{Id: "late", Success: true})
 		}
 	}()
@@ -152,5 +152,32 @@ func TestDeliverResultNeverBlocks(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("deliverResult blocked with no execute waiting")
+	}
+}
+
+// markStarted must only advance a starting instance to running: a duplicate
+// SessionStart must not clobber busy (task in flight) nor resurrect an
+// instance already marked unhealthy.
+func TestMarkStartedStateTransition(t *testing.T) {
+	cases := []struct {
+		name string
+		from instanceState
+		want instanceState
+	}{
+		{"starting becomes running", stateStarting, stateRunning},
+		{"busy is preserved", stateBusy, stateBusy},
+		{"unhealthy is preserved", stateUnhealthy, stateUnhealthy},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			inst := newInstance("inst-1", "coder")
+			inst.state.Store(int32(c.from))
+
+			inst.markStarted()
+
+			if got := inst.state.Load(); got != int32(c.want) {
+				t.Errorf("state = %d, want %d", got, c.want)
+			}
+		})
 	}
 }

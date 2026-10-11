@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -28,7 +28,7 @@ func testRuntime() config.Runtime {
 }
 
 func testNew(workspace, roleDir, prompt string) *Codex {
-	ctx := agenttypes.AgentContext{
+	ctx := agentprovider.AgentContext{
 		Workspace:   workspace,
 		RoleDir:     roleDir,
 		Prompt:      prompt,
@@ -38,7 +38,7 @@ func testNew(workspace, roleDir, prompt string) *Codex {
 	return a.(*Codex)
 }
 
-var _ agenttypes.Agent = (*Codex)(nil)
+var _ agentprovider.Agent = (*Codex)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestWritePrompt(t *testing.T) {
-	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
+	content := "<your_assigned_role>\nYou are a test role.\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
@@ -76,7 +76,7 @@ func TestWriteConfig(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 	args := c.configArgs()
 
-	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
+	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
 		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{command=\"mecha\",args=[\"webhook\",\"--addr\",\"127.0.0.1:12345\"]}]}]") {
 			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
@@ -87,7 +87,7 @@ func TestWriteConfig(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
+	prompt := "<your_assigned_role>\nCoordinator\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 
@@ -136,8 +136,8 @@ func TestParseHookEvent_Stop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventStop {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStop)
+	if e.Event != agentprovider.EventStop {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventStop)
 	}
 	if e.SessionID != "d54db35e" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "d54db35e")
@@ -155,8 +155,8 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventSessionStart {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventSessionStart)
+	if e.Event != agentprovider.EventSessionStart {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventSessionStart)
 	}
 	if e.SessionID != "abc123" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "abc123")
@@ -174,8 +174,8 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseHookEvent() error: %v", err)
 	}
-	if e.Event != agenttypes.EventStopFailure {
-		t.Errorf("Event = %q, want %q", e.Event, agenttypes.EventStopFailure)
+	if e.Event != agentprovider.EventStopFailure {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventStopFailure)
 	}
 	if e.SessionID != "deadbeef" {
 		t.Errorf("SessionID = %q, want %q", e.SessionID, "deadbeef")

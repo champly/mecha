@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
+	"github.com/champly/mecha/pkg/shellquote"
 )
 
 func testAgentConfig() config.AgentConfig {
@@ -29,7 +30,7 @@ func testRuntime() config.Runtime {
 }
 
 func testNew(workspace, roleDir, prompt string) *CodeBuddy {
-	ctx := agenttypes.AgentContext{
+	ctx := agentprovider.AgentContext{
 		Workspace:   workspace,
 		RoleDir:     roleDir,
 		Prompt:      prompt,
@@ -39,7 +40,7 @@ func testNew(workspace, roleDir, prompt string) *CodeBuddy {
 	return a.(*CodeBuddy)
 }
 
-var _ agenttypes.Agent = (*CodeBuddy)(nil)
+var _ agentprovider.Agent = (*CodeBuddy)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -56,7 +57,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestWritePrompt(t *testing.T) {
-	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
+	content := "<your_assigned_role>\nYou are a test role.\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
@@ -77,7 +78,7 @@ func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := agenttypes.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
+	if err := agentprovider.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
 		t.Fatalf("WriteJSONFile() error: %v", err)
 	}
 
@@ -108,11 +109,11 @@ func TestWriteSettings(t *testing.T) {
 			t.Errorf("hook %q has unsupported args field: %v", name, hook)
 		}
 		cmd, ok := hook["command"].(string)
-		if !ok || !strings.Contains(cmd, c.MechaBinary) || !strings.Contains(cmd, "webhook --addr "+agenttypes.QuoteShell(c.WebhookAddr)) {
+		if !ok || !strings.Contains(cmd, c.MechaBinary) || !strings.Contains(cmd, "webhook --addr "+shellquote.Quote(c.WebhookAddr)) {
 			t.Errorf("hook %q command = %q, want shell string with mecha webhook", name, cmd)
 		}
 	}
-	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
+	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
 		if !strings.Contains(string(data), event) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}
@@ -120,7 +121,7 @@ func TestWriteSettings(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
+	prompt := "<your_assigned_role>\nCoordinator\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 
@@ -169,8 +170,8 @@ func TestParseHookEvent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		if ev.Event != agenttypes.EventSessionStart {
-			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventSessionStart)
+		if ev.Event != agentprovider.EventSessionStart {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventSessionStart)
 		}
 		if ev.SessionID != "abc123" {
 			t.Errorf("session_id = %q, want %q", ev.SessionID, "abc123")
@@ -178,21 +179,21 @@ func TestParseHookEvent(t *testing.T) {
 	})
 
 	t.Run("Stop with last_assistant_message", func(t *testing.T) {
-		payload := `{"session_id":"df88915a-be69-47ef-83c1-d8a31b33b9c8","transcript_path":"/tmp/x.jsonl","cwd":"/tmp/mecha","hook_event_name":"Stop","stop_hook_active":false,"agent_type":"cli","last_assistant_message":"当前系统时间：2026年7月28日","background_tasks":[],"session_crons":[],"permission_mode":"bypassPermissions","client":"CLI","version":"2.127.3","model":"glm"}`
+		payload := `{"session_id":"df88915a-be69-47ef-83c1-d8a31b33b9c8","transcript_path":"/tmp/x.jsonl","cwd":"/tmp/mecha","hook_event_name":"Stop","stop_hook_active":false,"agent_type":"cli","last_assistant_message":"current time: 2026-07-28","background_tasks":[],"session_crons":[],"permission_mode":"bypassPermissions","client":"CLI","version":"2.127.3","model":"glm"}`
 		ev, err := c.ParseHookEvent([]byte(payload))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		if ev.Event != agenttypes.EventStop {
-			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventStop)
+		if ev.Event != agentprovider.EventStop {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventStop)
 		}
-		if ev.Output != "当前系统时间：2026年7月28日" {
-			t.Errorf("output = %q, want %q", ev.Output, "当前系统时间：2026年7月28日")
+		if ev.Output != "current time: 2026-07-28" {
+			t.Errorf("output = %q, want %q", ev.Output, "current time: 2026-07-28")
 		}
 	})
 
 	t.Run("Stop without last_assistant_message", func(t *testing.T) {
-		// [118;1:3uField absent → Output stays empty (no transcript fallback).
+		// Field absent: Output stays empty (no transcript fallback).
 		ev, err := c.ParseHookEvent([]byte(`{"hook_event_name":"Stop","stop_hook_active":false,"transcript_path":"/tmp/x.jsonl"}`))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
@@ -218,8 +219,8 @@ func TestParseHookEvent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		if ev.Event != agenttypes.EventStopFailure {
-			t.Errorf("event = %q, want %q", ev.Event, agenttypes.EventStopFailure)
+		if ev.Event != agentprovider.EventStopFailure {
+			t.Errorf("event = %q, want %q", ev.Event, agentprovider.EventStopFailure)
 		}
 		if ev.Error != "tool_error" {
 			t.Errorf("error = %q, want %q", ev.Error, "tool_error")

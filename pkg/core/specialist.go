@@ -11,8 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// roleLock returns the per-role spawn lock. Locks are never removed, so a
-// concurrent ask always finds the same lock for the same role.
+// roleLock returns the per-role spawn lock, creating it on first use.
 func (c *Core) roleLock(role string) *sync.Mutex {
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
@@ -34,9 +33,8 @@ func (c *Core) ensureSpecialist(ctx context.Context, role string) (*instance, er
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("core: coordinator role %q does not accept tasks", role))
 	}
 
-	// Serialize lookup-destroy-respawn per role so concurrent asks for the
-	// same role don't spawn duplicates; different roles spawn independently
-	// (a slow spawn for one role must not stall every other role's ask).
+	// Serialize lookup-destroy-respawn per role so concurrent asks cannot
+	// create duplicates. Different roles still spawn in parallel.
 	lock := c.roleLock(role)
 	lock.Lock()
 	defer lock.Unlock()

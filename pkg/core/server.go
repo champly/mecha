@@ -28,8 +28,7 @@ func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("unknown instance %q", req.Id))
 	}
 
-	// Mark registered only after validation, so a failed registration does
-	// not hold the slot.
+	// Mark registered only after validation succeeds.
 	role, ok := s.core.findRole(inst.role)
 	if !ok {
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("unknown role %q", inst.role))
@@ -54,7 +53,7 @@ func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*
 	}, nil
 }
 
-// ReportStatus handles agentd status reports: started → ready, exited → unhealthy.
+// ReportStatus maps agentd status reports onto instance state.
 func (s *grpcService) ReportStatus(ctx context.Context, req *api.StatusRequest) (*emptypb.Empty, error) {
 	inst := s.core.registry.get(req.Id)
 	if inst == nil {
@@ -81,8 +80,8 @@ func (s *grpcService) Ask(ctx context.Context, req *api.AskRequest) (*api.AskRes
 	return inst.execute(ctx, req.Task)
 }
 
-// TaskChannel handles the agentd bidi stream: attach it, then deliver task
-// results to waiting Asks until the stream breaks.
+// TaskChannel attaches the agentd stream and delivers results to waiting
+// Asks until it breaks.
 func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]) error {
 	id := api.GetInstanceID(stream.Context())
 	if id == "" {

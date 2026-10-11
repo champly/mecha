@@ -1,6 +1,10 @@
 package core
 
-import "sync"
+import (
+	"maps"
+	"slices"
+	"sync"
+)
 
 // registry maintains thread-safe id/role indexes of agentd instances.
 type registry struct {
@@ -51,9 +55,5 @@ func (r *registry) remove(inst *instance) {
 func (r *registry) all() []*instance {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]*instance, 0, len(r.byID))
-	for _, inst := range r.byID {
-		out = append(out, inst)
-	}
-	return out
+	return slices.Collect(maps.Values(r.byID))
 }

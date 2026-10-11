@@ -68,10 +68,8 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 	return nil
 }
 
-// forwardStdin copies stdin to the PTY until shutdown. os.Stdin.Read is
-// blocking; a.stop only takes effect between reads. The goroutine exits
-// when stdin is closed or the process terminates — the stray goroutine
-// after signalStop is harmless.
+// forwardStdin copies stdin to the PTY until shutdown. os.Stdin.Read blocks,
+// so a stray goroutine can outlive signalStop; that is harmless.
 func (a *Agentd) forwardStdin() {
 	buf := make([]byte, 4096)
 	for {
@@ -113,10 +111,8 @@ const (
 	readyTimeout     = 30 * time.Second
 )
 
-// watchReady closes a.ready once the agent's TUI finishes its initial render.
-// Tasks written before the TUI input handler is ready land as text in the
-// input box but the enter key is ignored. To reduce false positives the quiet
-// window is followed by a fixed grace period before readiness is declared.
+// watchReady closes a.ready once the agent's TUI has finished its initial
+// render. Tasks written earlier land in the input box but lose the enter key.
 func (a *Agentd) watchReady() {
 	defer close(a.ready)
 
@@ -139,9 +135,8 @@ func (a *Agentd) watchReady() {
 		return
 	}
 
-	// After the TUI output goes quiet, wait a fixed grace period to reduce
-	// the chance of closing ready during a brief pause between initialization
-	// steps that haven't produced output yet.
+	// A quiet window can fall inside a pause between initialization steps, so
+	// wait a bit longer before declaring readiness.
 	select {
 	case <-a.stop:
 	case <-time.After(500 * time.Millisecond):
@@ -165,8 +160,7 @@ func launchPTY(cmd *exec.Cmd) (*os.File, error) {
 }
 
 // makeRawIfTerminal switches stdin to raw mode when it is a terminal, so
-// keystrokes and terminal query replies reach the agent's TUI unmodified.
-// Returns the restore function (no-op when stdin is not a terminal).
+// keystrokes reach the agent's TUI unmodified. It returns a restore function.
 func makeRawIfTerminal() func() {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {

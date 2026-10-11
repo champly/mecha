@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 )
 
 // maxHookBody limits the hook event payload read into memory.
@@ -35,12 +35,12 @@ type WebhookServer struct {
 	closeOnce sync.Once
 
 	mu      sync.RWMutex // guards parseFn
-	parseFn func([]byte) (types.HookEvent, error)
-	ch      chan<- types.HookEvent
+	parseFn func([]byte) (agentprovider.HookEvent, error)
+	ch      chan<- agentprovider.HookEvent
 }
 
 // NewWebhookServer starts an HTTP server on 127.0.0.1:0.
-func NewWebhookServer(ch chan<- types.HookEvent) (*WebhookServer, error) {
+func NewWebhookServer(ch chan<- agentprovider.HookEvent) (*WebhookServer, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("webhook: listen: %w", err)
@@ -66,15 +66,14 @@ func (w *WebhookServer) Addr() string {
 }
 
 // SetParseFunc sets the hook event parser.
-func (w *WebhookServer) SetParseFunc(fn func([]byte) (types.HookEvent, error)) {
+func (w *WebhookServer) SetParseFunc(fn func([]byte) (agentprovider.HookEvent, error)) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.parseFn = fn
 }
 
-// Close shuts down the webhook HTTP server and unblocks in-flight handlers
-// (they answer 503), so the agent's hook process never hangs. It is safe to
-// call multiple times.
+// Close shuts down the HTTP server and unblocks in-flight handlers with 503,
+// so the agent's hook process never hangs. Safe to call multiple times.
 func (w *WebhookServer) Close() error {
 	w.closeOnce.Do(func() {
 		close(w.done)

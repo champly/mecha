@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -28,7 +28,7 @@ func testRuntime() config.Runtime {
 }
 
 func testNew(workspace, roleDir, prompt string) *Claude {
-	ctx := agenttypes.AgentContext{
+	ctx := agentprovider.AgentContext{
 		Workspace:   workspace,
 		RoleDir:     roleDir,
 		Prompt:      prompt,
@@ -38,7 +38,7 @@ func testNew(workspace, roleDir, prompt string) *Claude {
 	return a.(*Claude)
 }
 
-var _ agenttypes.Agent = (*Claude)(nil)
+var _ agentprovider.Agent = (*Claude)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestWritePrompt(t *testing.T) {
-	content := "<your_assigned_role>\n你是一个测试角色。\n</your_assigned_role>"
+	content := "<your_assigned_role>\nYou are a test role.\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), content)
 
@@ -76,7 +76,7 @@ func TestWriteSettings(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := agenttypes.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
+	if err := agentprovider.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
 		t.Fatalf("WriteJSONFile() error: %v", err)
 	}
 
@@ -91,7 +91,7 @@ func TestWriteSettings(t *testing.T) {
 	if !strings.Contains(string(data), c.WebhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
-	for _, event := range []string{agenttypes.EventSessionStart, agenttypes.EventStop, agenttypes.EventStopFailure} {
+	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
 		if !strings.Contains(string(data), event) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}
@@ -99,7 +99,7 @@ func TestWriteSettings(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	prompt := "<your_assigned_role>\n协调者\n</your_assigned_role>"
+	prompt := "<your_assigned_role>\nCoordinator\n</your_assigned_role>"
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), prompt)
 

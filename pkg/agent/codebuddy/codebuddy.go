@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	agenttypes "github.com/champly/mecha/pkg/agent/types"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
 )
 
@@ -22,12 +22,12 @@ var (
 
 // CodeBuddy handles the CodeBuddy agent type for a specific role.
 type CodeBuddy struct {
-	agenttypes.Base
+	agentprovider.Base
 }
 
 // New returns a CodeBuddy agent helper.
-func New(ctx agenttypes.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agenttypes.Agent, error) {
-	base := agenttypes.NewBase(ctx, cfg, runtime)
+func New(ctx agentprovider.AgentContext, cfg config.AgentConfig, runtime config.Runtime) (agentprovider.Agent, error) {
+	base := agentprovider.NewBase(ctx, cfg, runtime)
 	if _, err := base.ResolveBinary(codebuddyBinary); err != nil {
 		return nil, err
 	}
@@ -47,21 +47,19 @@ func (c *CodeBuddy) Prepare() error {
 	if err := c.PrepareRoleFile("CODEBUDDY.md"); err != nil {
 		return err
 	}
-	return agenttypes.WriteJSONFile(c.settingsPath(), c.settings())
+	return agentprovider.WriteJSONFile(c.settingsPath(), c.settings())
 }
 
 func (c *CodeBuddy) settings() map[string]any {
-	// CodeBuddy command hooks only support a single shell-form `command`
-	// string (run via $SHELL / Git Bash); there is no `args` exec form like
-	// Claude Code, so the full command line must be one quoted string.
-	// Reference: https://www.codebuddy.ai/docs/cli/hooks
-	command := agenttypes.WebhookCommand(c.MechaBinary, c.WebhookAddr)
+	// CodeBuddy hooks take one shell-form `command` string instead of Claude
+	// Code's command+args pair. See https://www.codebuddy.ai/docs/cli/hooks
+	command := agentprovider.WebhookCommand(c.MechaBinary, c.WebhookAddr)
 
 	hookEvents := map[string]any{}
 	for _, event := range []string{
-		agenttypes.EventSessionStart,
-		agenttypes.EventStop,
-		agenttypes.EventStopFailure,
+		agentprovider.EventSessionStart,
+		agentprovider.EventStop,
+		agentprovider.EventStopFailure,
 	} {
 		hookEvents[event] = []any{
 			map[string]any{
