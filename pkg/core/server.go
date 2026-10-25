@@ -45,7 +45,7 @@ func (s *grpcService) Register(ctx context.Context, req *api.RegisterRequest) (*
 		Workspace: s.core.workspace,
 		Prompt: agent.RenderPrompt(s.core.workspace, config.Runtime{
 			MechaBinary: s.core.mechaBinary,
-			Addr:        s.core.addr,
+			Addr:        s.core.Addr(),
 		}, role, s.core.profileRoles()),
 		RoleName:    inst.role,
 		Agent:       agentCfg,

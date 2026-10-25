@@ -1,6 +1,7 @@
 package term_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,11 +9,30 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/champly/mecha/pkg/term"
 )
+
+// lockedBuffer is safe to read while a backend goroutine writes.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
 
 func TestNew(t *testing.T) {
 	backend, err := term.New()
@@ -155,5 +175,42 @@ func TestNewAutoUnchangedWithoutHeadless(t *testing.T) {
 	}
 	if err := backend.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestNewHeadlessOutputWriters(t *testing.T) {
+	var stdout, stderr lockedBuffer
+	backend, err := term.New(term.Options{
+		Kind:   "headless",
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatalf("New(headless): %v", err)
+	}
+	defer backend.Close()
+
+	h, err := backend.Spawn(context.Background(), term.Spec{
+		Command: []string{"sh", "-c", `printf 'OUT-LINE\n'; printf 'ERR-LINE\n' >&2`},
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(stdout.String(), "OUT-LINE") && strings.Contains(stderr.String(), "ERR-LINE") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := backend.Kill(context.Background(), h); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "OUT-LINE") {
+		t.Errorf("stdout writer got %q, want OUT-LINE", got)
+	}
+	if got := stderr.String(); !strings.Contains(got, "ERR-LINE") {
+		t.Errorf("stderr writer got %q, want ERR-LINE", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -26,10 +27,13 @@ func (h fakeHandle) PaneID() string { return h.pane }
 type fakeBackend struct {
 	core *Core
 
-	mu     sync.Mutex
-	spawns map[string]int
-	killed []string
-	seq    int
+	mu       sync.Mutex
+	spawns   map[string]int
+	specs    []term.Spec
+	killed   []string
+	seq      int
+	closed   int
+	closeErr error
 }
 
 func (f *fakeBackend) Spawn(_ context.Context, spec term.Spec) (term.Handle, error) {
@@ -38,6 +42,7 @@ func (f *fakeBackend) Spawn(_ context.Context, spec term.Spec) (term.Handle, err
 		f.spawns = make(map[string]int)
 	}
 	f.spawns[spec.Role]++
+	f.specs = append(f.specs, spec)
 	f.seq++
 	n := f.seq
 	f.mu.Unlock()
@@ -60,13 +65,39 @@ func (f *fakeBackend) Kill(_ context.Context, h term.Handle) error {
 	return nil
 }
 
-func (f *fakeBackend) Close() error         { return nil }
+func (f *fakeBackend) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed++
+	return f.closeErr
+}
+
 func (f *fakeBackend) Label(_ string) error { return nil }
+
+func (f *fakeBackend) closeCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
+func (f *fakeBackend) isClosed() bool { return f.closeCalls() > 0 }
 
 func (f *fakeBackend) spawnCount(role string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.spawns[role]
+}
+
+// lastSpec returns the most recent spawn spec for role.
+func (f *fakeBackend) lastSpec(role string) (term.Spec, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.specs) - 1; i >= 0; i-- {
+		if f.specs[i].Role == role {
+			return f.specs[i], true
+		}
+	}
+	return term.Spec{}, false
 }
 
 func (f *fakeBackend) killedIDs() []string {
@@ -143,6 +174,36 @@ func TestEnsureSpecialistSpawnsThenReuses(t *testing.T) {
 	}
 	if got := c.registry.getByRole("coder"); got != inst1 {
 		t.Error("registry no longer points at the reused instance")
+	}
+}
+
+// serve forwards agentd logs to stdout with --log-stdout; run keeps the
+// historical workspace log file.
+func TestEnsureSpecialistLogStdoutOnlyInServeMode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		serve bool
+		want  bool
+	}{
+		{name: "run", serve: false, want: false},
+		{name: "serve", serve: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestCore(t)
+			c.serve = tc.serve
+			fb := c.backend.(*fakeBackend)
+
+			if _, err := c.ensureSpecialist(context.Background(), "coder"); err != nil {
+				t.Fatalf("ensureSpecialist: %v", err)
+			}
+			spec, ok := fb.lastSpec("coder")
+			if !ok {
+				t.Fatal("no spawn spec recorded")
+			}
+			if got := slices.Contains(spec.Command, "--log-stdout"); got != tc.want {
+				t.Errorf("Command %v contains --log-stdout = %v, want %v", spec.Command, got, tc.want)
+			}
+		})
 	}
 }
 

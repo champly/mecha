@@ -45,6 +45,8 @@ Hook 事件：agent ──► mecha webhook ──► agentd 本地 HTTP
   - **iTerm2**：需开启 Python API：**Preferences**（`⌘,`）→ **General** → **Magic** → 勾选 **✓ Enable Python API**。
   - **Ghostty**：分屏通过 AppleScript 驱动，需要支持 AppleScript 的较新版本；首次分屏时 macOS 会弹出针对 Ghostty 的"自动化"权限请求，请允许。
 
+`mecha serve` 不需要以上任一终端环境：它使用私有 PTY（headless 模式），也不会读取你的终端。
+
 ## 快速开始
 
 ```bash
@@ -62,6 +64,34 @@ mecha
 ```
 
 启动后直接告诉 Coordinator 你要做什么，拆解和派活由它完成。
+
+## 后台运行（headless）
+
+`mecha serve` 以 headless 方式运行 Core，不启动交互式 Coordinator，也不需要 TTY 或终端复用器：每个 specialist 都跑在私有 PTY 上，通过 `mecha ask` 驱动。
+
+```bash
+# 构建
+go build -o mecha .
+
+# 后台启动。日志写 stdout，由 supervisor 捕获
+nohup ./mecha serve --workspace /path/to/project --addr 127.0.0.1:50837 </dev/null >/tmp/mecha.log 2>&1 &
+
+# 给 specialist role 派发任务（serve 不启动 Coordinator）
+mecha ask --addr 127.0.0.1:50837 <specialist-role> "task"
+
+# 优雅退出
+kill -TERM <pid>
+```
+
+说明：
+
+- `serve` **不启动 Coordinator**，只提供 specialist 角色；暂不支持 `chat`。
+- `serve` 的日志是 `slog` 结构化文本，写 **stdout**，且不会创建日志文件。只有 `serve` 把进程日志输出到 stdout；裸 `mecha` / `mecha run` 仍写工作区日志文件 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`。由 nohup、systemd 或 launchd 负责重定向 serve 的 stdout/stderr。agentd 日志、specialist 启动失败和 panic 会转发到同一 stdout/stderr，不会被丢弃。
+- `--addr` 默认 `127.0.0.1:0`，且**只接受 loopback**：`127.0.0.0/8`、`::1` 或 `localhost`；端口必须是 `0`-`65535`。IPv6 必须使用方括号形式，例如 `[::1]:0`（裸写 `::1:0` 会被拒绝）。空 host/端口、`0.0.0.0`、`::` 和非 loopback IP 一律拒绝。原因：无鉴权的 gRPC API 可以驱动 agent。
+- 使用动态端口时，启动后会无条件向 stdout 打印 `mecha serve listening on <addr>`，即使 `--log-level error` 也能看到；需要固定入口时请显式传 `--addr`。
+- 其他 flag：`--log-level debug|info|warn|error`（默认 `info`）、`--shutdown-timeout`（默认 `10s`，最小 `5s`）。最小值给 agentd 的 4s Close 预算（2s SIGTERM 宽限 + 1s SIGKILL 后等待 + 1s webhook 关闭）留出 1s 余量；全局 `--config <path>` 指定配置文件（默认 `~/.mecha/config.yaml`）。
+- 暂不提供 pid 文件、`status`、`stop` 或单实例锁。允许重复启动，但多个实例必须使用不同 `--addr`，否则第二个实例会因端口占用启动失败。
+- SIGINT/SIGTERM 会优雅退出并返回 0：agent 进程组先收到 SIGTERM，宽限期后仍未退出则 SIGKILL。本机有可用且兼容的 `ps` 时，agentd 还会用 `ps -axo pid=,ppid=`（失败时尝试 `ps -A -o pid=,ppid=`）快照 agent 的后代并逐个 PID 发信号（best-effort），因此用 `setsid(2)` 脱离进程组的命令通常也会被清理；若 `ps` 不可用或不兼容，则只保证进程组清理。若后代在第一次扫描前已 reparent 到 PID 1，或两次扫描之间新 spawn 且父进程先退出，则无法追溯，仍可能残留。pane 清理受 `--shutdown-timeout` 约束；最后的 backend close 升级由对应 backend 自身的有界实现兜底。
 
 ## 配置说明
 
@@ -99,7 +129,7 @@ profiles:
 
 - role 默认继承 `agent`；可通过 `agent.name` 覆盖。
 - 每个 profile 必须且只能有一个 `is_coordinator: true` 的 role。
-- 日志：`~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`
+- 日志：`mecha` / `mecha run` 写 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`；`mecha serve` 写 stdout 且不创建日志文件，由 nohup/systemd/launchd 重定向。
 
 ## 命令一览
 
@@ -107,6 +137,7 @@ profiles:
 |---|---|
 | `mecha` / `mecha run` | 启动 Core + Coordinator（`--config <path>` 指定配置文件） |
 | `mecha init [-f]` | 写出默认配置到 `~/.mecha/config.yaml`（已有文件备份为 `.bak`；`-f` 覆盖不备份） |
+| `mecha serve --workspace <dir> --addr <ADDR>` | headless Core 服务，不启动 Coordinator；见[后台运行（headless）](#后台运行headless) |
 | `mecha ask --addr <ADDR> <role> "<task>"` | 派发任务（由 Coordinator 调用，阻塞等结果） |
 | `mecha version` | 输出版本、构建日期和 Go 运行时信息 |
 
@@ -114,7 +145,7 @@ profiles:
 
 ## 安全说明
 
-所有监听端口（Core gRPC 和各 agentd 的 webhook HTTP）都只绑定 `127.0.0.1`，但**没有任何鉴权**：本机上与你的用户同权的任意进程都可以调用 `Ask` 驱动 agent（而 agent 以 `--dangerously-skip-permissions` 之类的放行模式运行）。请把 mecha 当作单机单用户的本地工具：不要在共享机器上运行，也不要通过代理或隧道把端口暴露出去。
+所有监听端口（Core gRPC 和各 agentd 的 webhook HTTP）都只绑定 loopback（`127.0.0.1` 或 `::1`；webhook 使用 `127.0.0.1`），但**没有任何鉴权**：本机上与你的用户同权的任意进程都可以调用 `Ask` 驱动 agent（而 agent 以 `--dangerously-skip-permissions` 之类的放行模式运行）。请把 mecha 当作单机单用户的本地工具：不要在共享机器上运行，也不要通过代理或隧道把端口暴露出去。
 
 ## 文档
 

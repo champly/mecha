@@ -26,7 +26,7 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 
 	c.logger.Info("launching coordinator", "role", roleName, "id", inst.id)
 
-	cmd := exec.Command(c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.addr)
+	cmd := exec.Command(c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.Addr())
 	cmd.Dir = c.workspace
 
 	// Attach the terminal: agentd relays the agent PTY to its own stdio.

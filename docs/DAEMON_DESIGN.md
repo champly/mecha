@@ -1,7 +1,7 @@
 # Mecha 后台常驻（daemon）改造架构方案
 
-> 状态：设计稿，供 coder 实施
-> 范围：让 `mecha` 在无 TTY、无前台 stdin/stdout 的环境下常驻运行，可优雅退出、日志落盘、可被 systemd/launchd 托管。
+> 状态：设计中；Phase 1 MVP 已落地 `serve` / headless / 优雅退出（见 §0.1）
+> 范围：让 `mecha` 在无 TTY、无前台 stdin/stdout 的环境下常驻运行，可优雅退出；`serve` 模式的日志写 stdout，由 systemd/launchd/nohup 重定向，`run` 模式保持工作区日志文件。
 > 非目标：改变 agent 的 PTY/TUI 交互模型；改变 hook 协议；引入远程多租户或鉴权。
 
 ---
@@ -13,15 +13,40 @@
 | 是否 fork/setsid daemonize | **不实现传统 fork daemonize**。由 systemd / launchd / supervisor 托管。Go 进程 `fork()` 不安全；`--detach` 仅作为 P2 的 re-exec+setsid 便利选项 |
 | 新增命令 | `mecha serve`：前台常驻、headless、可托管；`mecha run` 保留原有交互语义 |
 | 终端后端 | 新增 `pkg/term/headless`，直接 spawn 子进程 + 进程组管理，不依赖 tmux/iTerm2/Ghostty |
-| 日志 | 每个进程独立日志文件 + 进程内大小轮转；不再让 Core/agentd 多进程写同一文件 |
+| 日志 | **serve MVP：Core 与 agentd 的 `slog` → stdout，由 supervisor 重定向，不创建日志文件**；`run` 保持 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`；每进程独立文件/轮转/0600 仅作为 serve 后续可选方案 |
 | 配置来源 | flags > env > YAML > 默认值；集中在 `pkg/daemon.Options` 解析 |
-| 信号 | SIGTERM/SIGINT 优雅退出；SIGHUP 重载配置并重开日志；第二次 TERM/INT 强制退出 |
+| 信号 | Phase 1 MVP：SIGTERM/SIGINT 优雅退出；SIGHUP 重载/第二次信号强制退出为后续 |
 | PID | flock 保护的单实例 pid 文件 + 原子写入的 state 文件（含实际 gRPC 地址） |
 | 健康检查 | gRPC health service + 独立的 loopback HTTP admin（`/healthz`、`/readyz`、`/status`） |
 | 端口 | `serve` 默认 gRPC `127.0.0.1:0`（state 文件发现），admin 默认 `127.0.0.1:7334`；可用配置固定 |
-| Coordinator 退出 | `serve` 模式下 Core 不退出，按指数退避重启 coordinator；`run` 模式保持“退出即结束” |
+| Coordinator 退出 | `serve` **不启动 coordinator**，只提供 specialist `Ask`；`run` 保持“退出即结束”。后台监督/重启是后续功能 |
 | daemon 输入通道 | 现状 `Ask` 拒绝 coordinator；后台化必须补一个输入入口。建议 P1 新增 `Chat` RPC + `mecha chat`，否则 `serve` 只能当 specialist 任务服务器 |
-| 安全 | 监听地址只允许 loopback，除非显式 `allow_non_loopback`；日志 0600 |
+| 安全 | 强制 loopback（`127.0.0.0/8`、`::1`、`localhost`），不提供非 loopback 开关；serve 日志由 supervisor 重定向（可选加固为 0600 文件，后续） |
+
+---
+
+## 0.1 Phase 1 MVP 实现状态
+
+| 能力 | 状态 |
+|---|---|
+| `mecha serve` 命令（`--workspace/--addr/--log-level/--shutdown-timeout`） | ✅ 已完成 |
+| headless 终端后端（私有 PTY、`Setsid + Setctty`、poll I/O、进程组 TERM→grace→KILL） | ✅ 已完成 |
+| Core `Options` / `NewWithOptions` / `Addr()` / `Run(ctx)` 与 `Serve=true` 模式 | ✅ 已完成 |
+| `serve` 不启动 coordinator，仅提供 specialist `Ask` | ✅ 已完成 |
+| agentd SIGTERM 优雅退出（进程组 TERM→grace→KILL + best-effort 后代扫描逐 PID 清理） | ✅ 已完成 |
+| `serve` 日志统一 `slog` → stdout（不创建日志文件）；`run` 保持工作区日志文件 | ✅ 已完成 |
+| `status` / `stop` / `chat` 命令 | ❌ 未完成 |
+| HTTP admin（`/healthz`、`/readyz`、`/status`） | ❌ 未完成 |
+| SIGHUP 配置重载与日志重开 | ❌ 未完成 |
+| pid 文件 / state 文件 / 单实例保护 | ❌ 未完成 |
+| `serve` 日志文件落盘、大小轮转、0600 权限 | ⏳ 后续可选，非 MVP 要求 |
+
+MVP 限制：
+
+- 没有 pid 文件，允许重复启动；多个实例必须使用不同 `--addr`，同一端口第二次绑定会失败。
+- `--addr` 只接受 loopback；`127.0.0.1:0` 时端口是动态的。IPv6 必须使用方括号形式，例如 `[::1]:0`（裸写 `::1:0` 会被 Go 拒绝）。`OnListening` 会无条件向 stdout 打印 `mecha serve listening on <addr>`，即使日志级别为 warn/error 也能发现实际地址。
+- `--shutdown-timeout` 最小 5s：agentd Close 预算 4s（2s SIGTERM 宽限 + 1s SIGKILL 后等待 + 1s webhook 关闭）+ 1s 预留，默认 10s。
+- `serve` 不读 stdin、不提供 coordinator 输入通道；没有 `status/stop/chat`，停止请直接向进程发送 SIGTERM。
 
 ---
 
@@ -54,18 +79,17 @@
 | `pkg/agentd/process.go:147-160` | `pty.GetsizeFull(os.Stdin)`，失败退化 24×80；`pty.StartWithSize` | headless 应显式使用配置尺寸，不探测 stdin；PTY 本身必须保留（agent 是 TUI） |
 | `pkg/agentd/process.go:164-174` | `makeRawIfTerminal()` 改当前 stdin 终端模式 | daemon 下不能改任何共享终端；应显式 headless 跳过 |
 | `pkg/agentd/process.go:200-222` | `SIGWINCH` + `os.Stdin` size → PTY | headless 无窗口尺寸来源，跳过 |
-| `pkg/agentd/agentd.go:209-218` | `initLogging` 用 `os.Getwd()` + 共享日期文件 | cwd 不稳定；多进程写同一文件；无轮转 |
+| `pkg/agentd` 历史实现 | agentd 按 workspace 自行派生日志文件 | 多进程写同一文件；无轮转；`serve` 下改为 stdout（`--log-stdout`），`run` 保持文件日志 |
 | `cmd/webhook.go:31` | `io.ReadAll(cmd.InOrStdin())` | **不要改**：这是 agent hook 子进程的 stdin，不是 daemon 的 stdin |
 | `cmd/ask.go:42` | 结果写 stdout | 客户端命令，保留；daemon 化不需要改 |
 
-### 1.3 日志与配置
+### 1.3 日志与配置（Phase 1 MVP）
 
-| 位置 | 现状 | 后台化问题 |
+| 位置 | 现状 | 说明 |
 |---|---|---|
-| `pkg/config/config.go:53-66` | 日志路径 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log` | 文件名在启动时固定；跨天不换文件；Core/agentd 多进程 append，无法安全轮转 |
-| `pkg/config/config.go:68-96` | `slog` text handler，文件 0644，`AddSource` | 权限偏宽；无 level/format 配置；无 reopen |
-| `pkg/config/config.go:138-159` | YAML 只有 agents/profiles | 缺 server/logging/runtime 段；无 env/flag 覆盖 |
-| `pkg/core/core.go:52-56`、`agentd/agentd.go:209-218` | 各自打开日志文件 | 无统一日志生命周期；失败静默回退 stderr |
+| `pkg/core`、`pkg/agentd` | `serve` 下 logger 注入，默认 `slog` text handler 写 stdout；`run` 使用工作区日志文件 | `serve` 不创建日志文件，由 supervisor 重定向；`run` 写 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log` |
+| `pkg/config/config.go` | YAML 只有 agents/profiles | `server/logging/runtime` 段尚未实现 |
+| `cmd/serve.go` | `--log-level` 控制 slog level；实际监听地址无条件打印到 stdout | 动态端口在 warn/error 下也可发现 |
 
 ### 1.4 关键结论
 
@@ -92,22 +116,22 @@ launchd / systemd / supervisor
            └─ agent CLI ← PTY
 ```
 
-- `serve` 不读 stdin，不写 stdout；所有诊断写日志。
+- `serve` 不读 stdin；所有诊断通过 `slog` 写 stdout，由 nohup/systemd/launchd 重定向，不创建日志文件。`run` 模式保持原有工作区日志文件。
 - 所有子进程由 Core 统一回收；headless backend 用进程组信号保证 agentd 子树退出。
-- headless backend 用 `SysProcAttr{Setsid: true, Setctty: true}` 拉起 agentd，因此 agentd 自身也是独立 session/进程组（`pgid == pid`）。agent 又由 agentd 通过 `pty.StartWithSize` 放入另一个独立 session，因此 **agentd 必须先 SIGTERM 优雅关闭 agent 进程组，再由 Core 对 agentd 做 SIGKILL 兜底**；SIGKILL 无法跨 session 回收 agent，最终由 systemd cgroup / launchd job 清理。
+- headless backend 用 `SysProcAttr{Setsid: true, Setctty: true}` 拉起 agentd，因此 agentd 自身也是独立 session/进程组（`pgid == pid`）。agent 又由 agentd 通过 `pty.StartWithSize` 放入另一个独立 session，因此 **agentd 必须先 SIGTERM 优雅关闭 agent 进程组，再由 Core 对 agentd 做 SIGKILL 兜底**；SIGKILL 无法跨 session 回收 agent。agentd 还会在 `ps` 可用时对后代快照逐 PID 补发 TERM/KILL，覆盖工具自行 `setsid(2)` 出去的子进程；`ps` 不可用或格式不兼容时只保证进程组清理，硬保证仍依赖 systemd cgroup / launchd job 清理。
 
 ### 2.2 `run` vs `serve`
 
 | 维度 | `mecha run`（默认，交互） | `mecha serve`（daemon） |
 |---|---|---|
 | 终端后端 | `auto`：tmux/iTerm2/Ghostty，缺失则报错 | 默认 `headless` |
-| stdio | 直连当前终端 | `/dev/null` 或日志 |
+| stdio | 直连当前终端 | 不读 stdin；日志写 stdout（supervisor 重定向） |
 | gRPC 地址 | `127.0.0.1:0` | 配置，默认 `127.0.0.1:0` + state 文件 |
 | admin HTTP | 关闭 | 默认开启 |
-| coordinator 退出 | 整个进程退出（保留现状） | 指数退避重启，服务继续 |
+| coordinator 退出 | 整个进程退出（保留现状） | MVP 不启动 coordinator；后台监督/重启为后续 |
 | pid/state | 不写 | 写 |
 | 信号 | SIGINT/SIGTERM | SIGINT/SIGTERM/SIGHUP |
-| 日志 | 可沿用旧路径 | 每进程独立 + 轮转 |
+| 日志 | `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log` | stdout（向 specialist agentd 传 `--log-stdout`）；不创建日志文件，文件/轮转后续可选 |
 
 建议实现上让 `run` 复用 `serve` 的 `Core.Run` 生命周期，只是传入不同 `Options`（`Interactive=true`、`RestartCoordinator=false`、`AdminAddr=""`）。
 
@@ -160,7 +184,7 @@ type Spec struct {
   - `exec.CommandContext(ctx, spec.Command[0], spec.Command[1:]...)`
   - `Dir=WorkDir`；`Env = os.Environ() + spec.Env`
   - `SysProcAttr{Setsid: true, Setctty: true}`（PTY 为 controlling terminal；`setsid` 同时保证 `pgid == pid`，因此 `kill(-pid, ...)` 仍覆盖整个 headless 子树。不要同时设置 `Setpgid`，Darwin 上会 EPERM）
-  - PTY master 设为非阻塞，使用 `poll` 读写；输出写入 `spec.Stdout`，stderr 可独立写入 `spec.Stderr`（Core 传入带轮转的 writer，或 `io.Discard`）
+  - PTY master 设为非阻塞，使用 `poll` 读写；输出写入 `spec.Stdout`，stderr 可独立写入 `spec.Stderr`。Phase 1 MVP 由 `term.Options.Stdout/Stderr` 注入 `os.Stdout/os.Stderr`；轮转 writer 为后续可选
   - 不用 `CommandContext` 的默认取消语义；自行起 watchdog：SIGTERM 进程组 → 等待 grace → SIGKILL 进程组，避免 `WaitDelay` 只杀 leader、漏掉 agent 子进程
   - `Start` 后 goroutine `Wait`；leader 回收后仍保留 handle，直至整个进程组消失后再从 map 删除
 - `Kill`：
@@ -171,17 +195,21 @@ type Spec struct {
 - `Close`：对所有存活 handle 执行 Kill，等待，返回。
 - Handle：`ID=role-pid`，`PaneID=strconv.Itoa(pid)`。
 
-注意：`agentd` 的 agent 是独立 session，进程组信号打不到；必须依赖 agentd 自己的 SIGTERM handler。因此 `agentd` 的优雅退出是 P0，不可省略。
+注意：`agentd` 的 agent 是独立 session，进程组信号打不到；必须依赖 agentd 自己的 SIGTERM handler。agentd 除 `kill(-pgid)` 外，还会在本机 `ps` 可用且兼容时 best-effort 扫描后代并逐 PID 终止，覆盖工具用 `setsid(2)` 脱离进程组的命令；`ps` 不可用时退回 group-only。在扫描前已 reparent 到 PID 1 的进程无法追溯。因此 `agentd` 的优雅退出是 P0，不可省略。
 
-### 3.4 日志落盘与轮转
+### 3.4 日志落盘与轮转（后续可选，非 MVP 要求）
 
-#### 目录与文件
+> **Phase 1 MVP 的 `serve` 模式不落盘**：Core 和 agentd（`--log-stdout`）都使用
+> `slog` 写 `os.Stdout`，由 nohup/systemd/launchd 重定向；`run` 模式保持原有工作区日志文件。以下“每进程独立文件 + 轮转 + 0600”是后续可选的
+> 运维增强方案，不是当前实现要求。
+
+
+#### 后续可选方案的目录与文件（Phase 1 MVP 当前不创建）
 
 ```
 ~/.mecha/logs/<workspace-key>/
-  core.log                        # Core + admin + headless 子进程 stderr
-  agentd-<role>-<shortid>.log     # agentd 自身 slog
-  agent-<role>-<shortid>.out      # 可选：PTY 输出（agent_output=file）
+  <process>-<role>-<id>.log       # 每个进程独立文件（后续方案，当前不创建）
+  <agent>-<role>-<id>.out         # 可选：PTY 输出（agent_output=file，后续）
   launchd.out.log / launchd.err.log  # supervisor 捕获的崩溃输出（可选）
 ```
 
@@ -190,8 +218,8 @@ type Spec struct {
 #### 归属规则
 
 - **禁止 Core 与 agentd 多进程写同一轮转文件**：轮转会互相踩踏。
-- Core 进程拥有 `core.log`；每个 agentd 通过 `--log-file` 接收自己的绝对路径。
-- agentd 的 stdout/stderr（panic traces）由 headless backend 写入 Core 的 `core.log`（单写者，安全），或写入独立 `.stderr.log`。
+- 后续若启用文件日志：Core 进程拥有自己的日志文件；每个 agentd 通过显式路径接收自己的文件。
+- Phase 1 MVP 中 agentd 的 stdout/stderr（panic traces）经 headless backend 写入 `os.Stdout/os.Stderr`。
 - PTY 输出默认 `discard`（TUI 控制序列巨大且通常无价值）；`agent_output=file` 时写独立轮转文件，默认 10 MiB × 2。
 
 #### 轮转实现
@@ -201,7 +229,7 @@ type Spec struct {
 ```go
 type Config struct {
     Dir        string
-    File       string        // 基础文件名，如 core.log
+    File       string        // 基础文件名
     Level      string        // debug|info|warn|error
     Format     string        // text|json
     MaxSize    int64         // 字节，<=0 关闭轮转
@@ -233,9 +261,8 @@ func (w *Writer) Close() error
 
 ```yaml
 server:
-  addr: 127.0.0.1:0          # Core gRPC
-  admin_addr: 127.0.0.1:7334 # health/status HTTP
-  allow_non_loopback: false
+  addr: 127.0.0.1:0          # Core gRPC；仅允许 loopback
+  admin_addr: 127.0.0.1:7334 # health/status HTTP（后续）
 
 logging:
   dir: ""                    # 空 => ~/.mecha/logs/<workspace-key>
@@ -272,7 +299,7 @@ type Config struct {
 
 ```
 MECHA_CONFIG, MECHA_WORKSPACE, MECHA_PROFILE
-MECHA_ADDR, MECHA_ADMIN_ADDR, MECHA_ALLOW_NON_LOOPBACK
+MECHA_ADDR, MECHA_ADMIN_ADDR
 MECHA_LOG_DIR, MECHA_LOG_LEVEL, MECHA_LOG_FORMAT, MECHA_AGENT_OUTPUT
 MECHA_BACKEND, MECHA_PID_FILE, MECHA_STATE_FILE, MECHA_SHUTDOWN_TIMEOUT
 ```
@@ -286,7 +313,6 @@ type Options struct {
     Profile            string        // 覆盖 config.profile
     Addr               string
     AdminAddr          string
-    AllowNonLoopback   bool
     LogDir             string
     LogLevel           string
     LogFormat          string
@@ -368,14 +394,15 @@ func RemoveState(path string) error
 | 信号 | 行为 |
 |---|---|
 | SIGTERM / SIGINT | 第一次：进入优雅关闭（见 3.9），退出码 0；第二次：日志后 `os.Exit(130/143)` |
-| SIGHUP | 重载配置文件 + `logging.Reopen()` + `core.Reload(cfg)`；失败保留旧配置并记录 error；1s 内去抖 |
+| SIGHUP | 后续：重载配置文件 + `logging.Reopen()` + `core.Reload(cfg)`；失败保留旧配置并记录 error；1s 内去抖 |
 | SIGQUIT | 保留 Go 默认 stack dump（由 supervisor 捕获 stderr） |
 | SIGWINCH | serve 忽略；agentd 交互模式转发 PTY，headless 忽略 |
 
 `cmd/agentd.go`：
 
-- `signal.NotifyContext(ctx, SIGINT, SIGTERM)` → `a.Run(ctx)`。
-- 收到信号：停止接收新任务 → 失败在途任务 → `ReportStatus(exited)`（尽力）→ 先 SIGTERM agent 进程组，等待 grace（默认 10s）→ SIGKILL → 关 PTY/webhook/log。
+- `cmd/agentd.go` 在 `Start()` 之前建立 `signal.NotifyContext(ctx, SIGINT, SIGTERM)`，并把它作为 `Options.Context` 传入；`Register`/`TaskChannel` 启动 RPC 使用该 ctx + 10s 超时。
+- 收到信号：`signalStop` → 先完整清理 agent（进程组 SIGTERM，2s grace，SIGKILL，1s 有界回收；同时 best-effort 扫描后代并逐 PID 发送 TERM/KILL）→ 取消 TaskChannel → 关闭 webhook（最多 1s）→ 关闭 Core conn。
+- `Close` 自身也调用 `signalStop`；总预算 4s（2+1+1），Core 最小 `ShutdownTimeout=5s`，留 1s 余量。
 - agentd 不处理 SIGHUP（无配置可重载）。
 
 SIGHUP 重载语义（必须写进文档）：
@@ -388,8 +415,8 @@ SIGHUP 重载语义（必须写进文档）：
 
 #### Core gRPC
 
-- `server.addr` / `--addr`；`serve` 默认 `127.0.0.1:0`，启动后把实际地址写入 state。
-- 校验：解析 host:port；host 为空或非 loopback 时，除非 `allow_non_loopback=true`，否则报错。原因：Ask 可驱动带 `--dangerously-skip-permissions` 的 agent。
+- `server.addr` / `--addr`；`serve` 默认 `127.0.0.1:0`，启动后通过 `OnListening` 暴露实际地址（MVP 无 state 文件）。
+- 校验：`cmd/serve.go` 与 `Core.listen` 双重调用 `ValidateLoopbackAddr`；仅接受 `127.0.0.0/8`、`::1`、`localhost`（解析出的所有 IP 都必须是 loopback）。空 host、`0.0.0.0`、`::`、公网 IP 一律报错，不提供 `allow_non_loopback` 开关。原因：无鉴权的 Ask 可驱动带 `--dangerously-skip-permissions` 的 agent。
 - 注册 `grpc_health_v1`：
   - `""`/`"api.Core"`：启动后 `SERVING`，shutdown 时 `NOT_SERVING`。
   - 可选：coordinator 未 ready 时 `"api.Core"` 返回 `NOT_SERVING`，把 readiness 语义交给 `/readyz` 即可。
@@ -433,26 +460,31 @@ func (s *Server) Close(ctx context.Context) error
 - HTTP server 超时：`ReadHeaderTimeout=5s`、`ReadTimeout=10s`、`WriteTimeout=10s`、`IdleTimeout=60s`。
 - `Snapshot()` 只做内存读取，禁止阻塞在网络/子进程等待上。
 
-### 3.9 优雅关闭顺序
+### 3.9 优雅关闭顺序（Phase 1 MVP 实现）
 
-`Core.Run(ctx)` 在 ctx 取消（信号）时：
+`Core` 的关闭由 `sync.Once` 保护，幂等；ctx 取消（SIGTERM/SIGINT）时：
 
-1. 标记 `state=stopping`；`/readyz` 返回 503；拒绝新 `Ask`（`grpcService.Ask` 检查 `stopping` 标志，返回 `Unavailable`）。
-2. **先关闭 gRPC listener**（停止接受新连接），但保留已有 stream；不能直接 `GracefulStop`：`TaskChannel` 是常驻双向流，GracefulStop 会一直等它，直到超时。
-3. 向 coordinator 进程组发 SIGTERM；等待其退出（上限 grace，默认 10s）；超时 SIGKILL。
-4. 对所有 specialist 并行 `backend.Kill`（headless 内部 SIGTERM→SIGKILL；tmux/iTerm2/Ghostty 原有逻辑），总上限 `ShutdownTimeout - reserve`。agentd 退出时会关闭 `TaskChannel` 与 gRPC conn。
-5. 此时再 `GracefulStop()`，预算剩余时间（reserve 默认 5s）；超时则 `Stop()`。在途 `Ask` 因 agentd 断开而快速失败，不会等 30min。
-6. 关闭 admin server（`Shutdown`，5s）。
-7. `backend.Close()` → 关闭 log writers（flush）→ 移除 state 文件 → 释放 pid 锁。
-8. 记录 `shutdown complete signal=... duration=...`，返回 nil。
+1. `Core.Run` 从 `ctx.Done()` 返回；`shutdown()` 立即调用 `grpc.Server.Stop()`。MVP **不使用 `GracefulStop`**：`TaskChannel` 是常驻双向流，GracefulStop 会挂起等待；直接 Stop 会断开流并促使 agentd 自行退出。
+2. 所有 specialist pane 并行 `backend.Kill`，共享同一个 `ShutdownTimeout` 预算（`Core.Options.ShutdownTimeout`，默认 10s，最小 5s）。headless backend 先向进程组发 SIGTERM，等待 agentd 的 2s 宽限期，再 SIGKILL；ctx 到期会强制升级到 SIGKILL。agentd 自身在 2s+1s 预算内先对 `ps -axo pid=,ppid=` 快照中的 agent 后代逐个 PID 发 SIGTERM，宽限期内每 150ms 重扫并补发 TERM，SIGKILL 阶段重扫后对快照并集逐 PID SIGKILL，同时保留 `kill(-pgid)` 兜底。单次扫描的 deadline 为 `min(phaseDeadline, now+300ms)`；`ps -axo` 失败时尝试 `ps -A -o pid=,ppid=`，两者都失败才 Warn（每次 shutdown 最多一次）并退回进程组行为。
+3. `backend.Close()`；Close 的错误会被记录，不静默丢弃。
+4. 最后记录 `core shutdown complete`（顺序在 backend.Close 之后）。
 
-预算默认：`shutdown_timeout=20s`，supervisor `TimeoutStopSec=30`，留 10s 余量。文档明确：**SIGTERM 会中止在途任务，不会等待 30min 的任务超时**。
+`serve` 不启动 coordinator，因此没有 coordinator 终止步骤。`run` 模式保持现有交互语义：coordinator 由前台 `launchCoordinator` 管理，ctx 取消时沿用原有 `Process.Kill()`。
 
-实现注意：关闭 listener 后 `grpc.Server.Serve` 会返回错误；若此时已处于 stopping，应视为正常退出，不要记为致命错误。
+预算说明：`--shutdown-timeout` 必须 >= 5s：agentd Close 预算为 4s（2s SIGTERM grace + 1s SIGKILL 后等待 + 1s webhook Close），Core 再留 1s reserve。**SIGTERM 会中止在途任务，不会等待 30min 的任务超时**。
 
-### 3.10 Coordinator 监督
+agentd `Close` 内部顺序固定为：`signalStop` → 完整 stopAgent（进程组 TERM→2s→KILL→1s 回收，叠加 best-effort 后代扫描与逐 PID TERM/KILL）→ 取消 TaskChannel → webhook Close（最多 1s）→ Core conn Close。agent 位于独立 session，Core 无法跨 session 回收，因此 **agent 清理必须先于 webhook/conn 等可能阻塞的步骤**。
 
-`serve` 模式下 `pkg/core/coordinator.go` 改为循环：
+残留风险：若 agent 的后代在第一次 `ps` 扫描前就已经 `setsid(2)` 并 reparent 到 PID 1，`ps` 进程树已无法从 agent root 追溯，agentd 也不会跨 PID 1 全局搜索，这类进程仍可能残留；同理，在两次扫描间隔内新 spawn 且父进程先退出、被 reparent 到 PID 1 的后代也可能漏掉。扫描依赖本机有可用的 `ps`；BusyBox 等实现可能不支持 `-axo`，会先尝试 `-A -o pid=,ppid=`，仍失败则只保证进程组清理。PID 复用窗口约为 `agentStopGrace+agentKillWait`（默认 ~3s，因为初始快照会保留到 SIGKILL 阶段），只对快照中出现过的 PID 发信号，属 best-effort。需要强保证时应依赖 systemd/launchd 的 cgroup/job 级清理。
+
+实现注意：`grpc.Server.Serve` 在 Stop 后返回 `grpc.ErrServerStopped`，该错误会被过滤；非预期 Serve 错误通过 channel 返回给 `Run`，不会让进程在服务已死后继续阻塞到 ctx 取消。
+
+### 3.10 Coordinator 监督（后续设计；Phase 1 MVP 不启用）
+
+> Phase 1 MVP 的 `serve` **不启动 coordinator**，因此本节不参与当前实现。
+> `run` 模式仍前台运行 coordinator，不自动重启。以下为后续阶段的监督方案。
+
+`pkg/core/coordinator.go` 后续可改为循环：
 
 ```go
 func (c *Core) superviseCoordinator(ctx context.Context) error {
@@ -481,36 +513,37 @@ func (c *Core) superviseCoordinator(ctx context.Context) error {
 ### 3.11 agentd headless 改造
 
 ```go
-// pkg/agentd
+// pkg/agentd（Phase 1 MVP 实际接口）
 type Options struct {
-    ID              string
-    CoreAddr        string
-    Workspace       string   // 不再依赖 cwd
-    LogFile         string   // 绝对路径；空则按 workspace 派生
-    LogLevel        string
-    Headless        bool
-    AgentOutput     string   // discard|file
-    AgentLogFile    string
-    Cols, Rows      uint16   // 默认 80×24
-    ShutdownTimeout time.Duration
+    ID       string
+    CoreAddr string
+    Logger    *slog.Logger // nil => LogStdout ? stdout : workspace log file
+    LogStdout bool         // serve 模式：日志写 stdout，不建文件
+    Context   context.Context // nil => Background；启动 RPC 和连接生命周期
 }
 
 func New(opts Options) *Agentd
-func (a *Agentd) Run(ctx context.Context) error
+func (a *Agentd) Start() error
+func (a *Agentd) Stop()
+func (a *Agentd) Wait()
+func (a *Agentd) Close()
 ```
 
-- `Run`：等价于 `Start` + 等 ctx/stop；由 `cmd/agentd.go` 注入 `signal.NotifyContext`。
-- `startAgent`：
-  - 输出：`headless + discard` → `io.Discard`；`headless + file` → `logging.Writer`；交互 → `os.Stdout`。
-  - `activityWriter` 包装输出，readiness 逻辑不变。
-  - 仅交互模式（`!Headless && term.IsTerminal(stdin)`）启动 `forwardStdin`、`makeRawIfTerminal`、`watchWinch`。
-  - `launchPTY(cmd, &pty.Winsize{Rows: opts.Rows, Cols: opts.Cols})`，headless 不读 stdin。
-- `initLogging`：使用 `opts.Workspace` + `opts.LogFile`，不再 `os.Getwd()`；日志加 `id`/`role` 字段。agentd 是独立进程，可以继续 `slog.SetDefault` 指向自己的日志文件，但必须使用显式路径。
+- `cmd/agentd.go` 暴露 `--id` / `--addr` / `--log-stdout`，在 `Start()` 前建立 `signal.NotifyContext(SIGINT, SIGTERM)` 并注入 `Options.Context`。
+- `Register` 与 `TaskChannel` 建流使用该 ctx + 10s 启动超时；启动阶段收到 SIGTERM 会快速退出。
+- `serve`（`--log-stdout`）下日志统一 `slog` → stdout，不创建/关闭日志文件；默认（`run`）写工作区日志文件。
+- `startAgent` 用 `pty.StartWithSize` 启动 agent；agent 是独立 session/进程组。
 - 退出：
-  - 单一 `cmd.Wait()` 所有者（`waitAgent`）；其他路径只发信号并等待 `waitDone`，避免重复 Wait。
-  - SIGTERM → `syscall.Kill(-pid, SIGTERM)`（agent 是 session leader）→ 等待 grace → `SIGKILL`。
-  - 失败在途任务 → `ReportStatus(exited)` → Close。
-- `Close` 顺序：stop 任务 → 关 PTY（发送 SIGHUP）→ 等待/强杀 agent → webhook Shutdown → gRPC conn → log close。
+  - 单一 `cmd.Wait()` 所有者（`waitAgent`），避免重复 Wait。
+  - `waitAgent` 记住 `agentPID`，leader 退出后仍可清理后代进程组。
+  - 任务超时/失败 → `signalStop`；supervise 收到 stop 后尽力 `ReportStatus(exited)`（失败仅 Warn），随后 Close。
+- `Close` 顺序与预算：
+  1. `signalStop()`（保证直接调用 Close 也能唤醒 Wait）；
+  2. `stopAgent()`：进程组 SIGTERM → 2s grace → SIGKILL → 1s 有界回收；
+  3. 取消 TaskChannel；
+  4. webhook `Shutdown`，最多 1s；
+  5. Core gRPC conn Close。
+  总预算约 4s；Core 最小 `ShutdownTimeout=5s`，先等 agentd 完成，再对 agentd 组做 SIGKILL 兜底。webhook/conn 错误均记录 `slog.Warn`。
 
 ### 3.12 环境变量与启动预检
 
@@ -561,7 +594,7 @@ supervisor 启动的环境通常很干净，必须显式处理：
    mecha chat --role architect "..."   # 等价于 ask，便于统一脚本
    ```
 4. 并发与超时：复用 per-instance `taskMu` 串行；默认 30min（`api.TaskTimeout`），CLI 可 `--timeout`；结果来自 hook `Stop` 的 `Output`，不是 PTY 原始输出。
-5. 可选 `serve --no-coordinator`：纯 specialist 任务服务器；此时 `/readyz` 只要求 gRPC 可用，不要求 coordinator。
+5. **Phase 1 MVP 的 `serve` 固定为纯 specialist 任务服务器（不提供 `--no-coordinator` flag）**；此时 `/readyz`（后续实现）只要求 gRPC 可用，不要求 coordinator。
 
 若产品上只需要后台 specialist、不需要对话 coordinator，则：
 - `serve` 可以不启动 coordinator（`--no-coordinator`），直接暴露 `Ask`；
@@ -572,20 +605,19 @@ supervisor 启动的环境通常很干净，必须显式处理：
 - 直接放开 `Ask` 接受 coordinator：会破坏现有“Ask 只用于 specialist”的不变量和测试语义。
 - 让用户 `attach` 到 PTY 再输入：仍依赖终端，违背本次目标（可作为 P3 的调试功能）。
 
-### 3.14 `serve` 启动与失败顺序（实现清单）
+### 3.14 `serve` 启动与失败顺序（Phase 1 MVP 实现）
 
-1. 解析 flags/env；加载并校验 YAML；应用 `--profile`；`daemon.Resolve()` + `Validate()`。
-2. 确认 workspace 绝对路径、HOME、日志目录、run 目录权限；做 agent binary/端口预检。
-3. `logging.New()` 初始化 `core.log`；`slog.SetDefault`；后续错误同时写 stderr 与日志。
-4. `daemon.AcquirePIDFile()`；失败（`ErrAlreadyRunning`）→ 退出码 3。
-5. `term.New(backend)`；`core.New(options)`。
-6. 启动 admin HTTP（若配置）；`core.Run(ctx)` 内部 listen gRPC 并回调 `OnListening(addr)`。
-7. `OnListening` 中：写 state（pid、gRPC addr、admin addr、workspace、profile、version、started_at）。
-8. 启动 coordinator（`serve` 下 supervisor 循环；`run` 下前台等待）。
-9. 安装信号处理（SIGTERM/SIGINT/SIGHUP）；阻塞到 ctx 取消。
-10. 清理顺序严格反向：stop accepting（关 listener）→ 子进程 SIGTERM → Core GracefulStop/Stop → admin shutdown → backend close → log close → state remove → pid release。
+1. `cmd/serve.go` 解析 `--workspace`（默认 cwd，必须是已存在目录）、`--addr`、`--log-level`、`--shutdown-timeout`。
+2. 校验 `--addr` 为 loopback；校验 `--shutdown-timeout >= 5s`。
+3. 加载配置；`term.New(term.Options{Kind:"headless", Stdout:os.Stdout, Stderr:os.Stderr})`，让 agentd slog、启动错误和 panic 在终端可见（Core spawn specialist agentd 时附带 `--log-stdout`）。
+4. `slog.SetDefault`（stdout text handler）；`core.NewWithOptions` 注入 backend/logger/addr/timeout/`Serve:true`/`OnListening`。
+5. 建立 SIGINT/SIGTERM `signal.NotifyContext`；`core.Run(ctx)` 内部 listen gRPC。
+6. `OnListening` 中无条件向 stdout 打印 `mecha serve listening on <addr>`，不受日志级别影响。
+7. `Serve=true`：不启动 coordinator，阻塞到 ctx 取消或非预期 gRPC Serve 错误。
+8. 关闭：gRPC `Stop` → 并行 pane Kill（共享 `ShutdownTimeout`）→ `backend.Close` → 记录 `core shutdown complete`。pane 清理受 `ShutdownTimeout` 约束；backend Close 是之后由 backend 自身实现界定的最终升级。
+9. listen 失败也调用 `shutdown()` 关闭注入的 backend；`cmd/serve.go` 另有幂等 `defer backend.Close()` 兜底。
 
-任一步失败：关闭已创建资源、删除 state（若已写）、释放 pid 锁、返回可操作错误；**不得留下半启动的监听或子进程**。
+MVP 不创建 pid/state/admin/log 文件，也不安装 SIGHUP。任一步失败返回可操作错误，不留下监听或子进程。
 
 ---
 
@@ -597,27 +629,26 @@ supervisor 启动的环境通常很干净，必须显式处理：
 type Options struct {
     Workspace       string
     Config          config.Config
-    Addr            string // "" => 127.0.0.1:0
-    Backend         term.Backend // nil => term.New(term.Options{Kind:...})
-    Logger          *slog.Logger
+    Backend         term.Backend // nil => term.New()
+    Addr            string       // "" => 127.0.0.1:0
+    Logger          *slog.Logger // nil => stdout text handler
     ShutdownTimeout time.Duration
-    RestartCoordinator bool
-    OnListening     func(addr string) error // 写 state 的钩子，失败则终止启动
+    Serve           bool // true => 不启动 coordinator，Run 阻塞到 ctx 取消
+    OnListening     func(addr string) // net.Listen 成功后回调实际地址
 }
 
 type Core struct { /* ... */ }
 
-func New(opts Options) (*Core, error)
-func (c *Core) Run(ctx context.Context) error
+func NewWithOptions(opts Options) (*Core, error)
+func New(workspace string, cfg config.Config) (*Core, error) // 兼容 run 模式
+func (c *Core) Start(ctx context.Context) error // run 模式
+func (c *Core) Run(ctx context.Context) error   // serve/run 通用
 func (c *Core) Addr() string
-func (c *Core) Reload(cfg config.Config) error
-func (c *Core) Snapshot() Status // Status 至少包含 coordinator 与 specialists 的 role/id/state/restarts/last_error
 ```
 
-- `Core.cfg` 改为 `atomic.Pointer[config.Config]`，`profileRoles/findRole/coordinatorRole` 每次取快照；避免 SIGHUP 与请求处理竞态。
-- `Core` 不再创建/关闭日志文件；logger 由 cmd 注入，生命周期归 cmd。
-- `Core.Run` 负责关闭传入的 backend（约定：所有权转移给 Core）。
-- 保留 `func (c *Core) Start(ctx context.Context) error { return c.Run(ctx) }` 作为过渡，减少一次性改动量。
+- `serve` 模式下 `Core` 不创建/关闭日志文件，logger 由 cmd 注入，默认写 stdout；兼容构造函数 `New` 在 `run` 模式打开并持有工作区日志文件。
+- `Core.Run`/`Start` 负责关闭传入的 backend（所有权转移给 Core）；listen 失败同样走 shutdown。
+- `ShutdownTimeout` 是所有 specialist pane 共享的总预算；`<=0` 取 10s，`<5s` 提升到 5s。
 
 ### 4.2 `pkg/term`
 
@@ -626,6 +657,8 @@ type Backend = driver.Backend
 type Options struct {
     Kind          string
     AllowHeadless bool
+    Stdout        io.Writer // 仅 headless 使用；nil => discard
+    Stderr        io.Writer // 仅 headless 使用；nil => 合并到 PTY
 }
 func New(opts ...Options) (Backend, error) // 无参等价 Options{Kind:"auto"}
 ```
@@ -640,7 +673,6 @@ type Options struct { /* 见 3.5 */ }
 type FlagValues struct {
     Config, Workspace, Profile                string
     Addr, AdminAddr                           string
-    AllowNonLoopback                          *bool
     LogDir, LogLevel, LogFormat, AgentOutput  string
     Backend, PidFile, StateFile               string
     ShutdownTimeout                           time.Duration
@@ -686,13 +718,18 @@ func (s *Server) Close(ctx context.Context) error
 
 ## 5. 文件清单与改动要点
 
+> 下表是完整设计范围。Phase 1 MVP 实际落地的是 `pkg/term/headless`、Core 的
+> serve 模式、agentd 优雅退出与 `cmd/serve.go`；`pkg/logging`、`pkg/daemon`、
+> admin/pid/state 等属于后续阶段。日志落盘/轮转不作为 MVP 要求。
+
+
 ### 5.1 新增
 
 | 文件 | 要点 | 优先级 | 风险 |
 |---|---|---|---|
-| `pkg/logging/logging.go` | slog 构造、level/format、`Writer.Reopen` | P0 | 中 |
-| `pkg/logging/rotate.go` | 大小轮转、保留/清理、并发安全 | P0 | 中（丢日志） |
-| `pkg/logging/rotate_test.go` | 轮转/并发/超大单条测试 | P0 | 低 |
+| `pkg/logging/logging.go` | slog 构造、level/format、`Writer.Reopen` | P2（后续可选） | 中 |
+| `pkg/logging/rotate.go` | 大小轮转、保留/清理、并发安全 | P2（后续可选） | 中（丢日志） |
+| `pkg/logging/rotate_test.go` | 轮转/并发/超大单条测试 | P2（后续可选） | 低 |
 | `pkg/daemon/options.go` | flags/env/YAML 优先级、workspace 绝对化、校验 | P0 | 中 |
 | `pkg/daemon/pidfile.go` | flock 单实例、stale 处理 | P0 | 中 |
 | `pkg/daemon/state.go` | 原子 state 读写 | P0 | 低 |
@@ -716,24 +753,24 @@ func (s *Server) Close(ctx context.Context) error
 |---|---|---|---|
 | `cmd/root.go` | 注册 `serve`/`status`/`stop`；保留 `mecha` 默认 `run`；新增持久 flags 或命令级 flags | P0 | 低 |
 | `cmd/run.go` | 复用 serve 生命周期；`Interactive=true`、`Backend=auto`、`RestartCoordinator=false`、admin 关闭；保持原行为 | P0 | 中 |
-| `cmd/agentd.go` | 新增 `--workspace/--log-file/--log-level/--headless/--agent-output/--agent-log-file/--cols/--rows/--shutdown-timeout`；`signal.NotifyContext`；调用 `Run(ctx)` | P0 | 中 |
+| `cmd/agentd.go` | 仅保留 `--id/--addr`；`signal.NotifyContext(SIGINT, SIGTERM)`；注入 `Options.Context`；`Start/Stop/Wait` | P0 | 中 |
 | `cmd/ask.go` | `--addr` 可选：缺省读当前 workspace state；保留显式 addr | P1 | 低 |
 | `main.go` | 保持 CLI 错误 stderr；必要时增加已定义退出码（1 启动/运行，3 已运行） | P0 | 低 |
 | `pkg/config/config.go` | 新增 `Server/Logging/Runtime` 段与默认值；新增 workspace-key 日志路径/run 路径 helper；`NewFileLogger` 改为兼容 wrapper 或删除 | P0 | 中 |
 | `pkg/config/config.yaml` | 增加注释掉的 `server/logging/runtime` 示例，保持旧配置可用 | P1 | 低 |
-| `pkg/core/core.go` | `Options/New/Run/Addr/Reload/Snapshot`；可配置监听；graceful shutdown；不再持有日志文件；health service | P0 | 高 |
+| `pkg/core/core.go` | `Options/New/Run/Addr/Reload/Snapshot`；可配置监听；graceful shutdown；`serve` 不再持有日志文件（`run` 兼容构造函数保留文件日志）；health service | P0 | 高 |
 | `pkg/core/coordinator.go` | headless 子进程（stdio 重定向）；进程组 SIGTERM→SIGKILL；重启循环 + 退避；单一 Wait 所有者 | P0 | 高 |
 | `pkg/core/specialist.go` | Spawn 传 `Env/Stdout/Stderr`；日志路径下发；配置快照读取 | P0 | 中 |
 | `pkg/core/server.go` | `Ask` 拒绝 stopping；新增 `Chat`（P1）；Register/ReportStatus 用配置快照；状态快照 | P0 | 中 |
 | `pkg/core/instance.go` | 暴露 Snapshot（state/role/id/restarts）；不改变任务状态机 | P1 | 中 |
 | `pkg/core/registry.go` | `snapshot()` 返回稳定排序的角色状态 | P1 | 低 |
-| `pkg/agentd/agentd.go` | Options/Run(ctx)；显式 workspace/log；信号与优雅关闭；按显式路径设置进程内默认 logger | P0 | 高 |
+| `pkg/agentd/agentd.go` | `Options{ID,CoreAddr,Logger,LogStdout,Context}`；Start/Stop/Wait/Close；Close 先清理 agent 进程组再关 webhook/conn；`serve` 日志 stdout，`run` 写工作区日志文件 | P0 | 高 |
 | `pkg/agentd/process.go` | 输出 sink；headless 跳过 stdin/raw/winch；PTY 尺寸显式；agent 进程组优雅 kill | P0 | 高 |
-| `pkg/agentd/webhook.go` | 使用注入 logger（可选）；其余不变 | P2 | 低 |
+| `pkg/agentd/webhook.go` | `Close` 的 `Shutdown` 最多 1s，超时强制关闭连接，避免阻塞 agent 清理 | P0 | 中 |
 | `pkg/term/term.go` | `New(Options)` 显式选择 + headless 注册；保留 `New()` 兼容 wrapper | P0 | 中 |
 | `pkg/term/driver/driver.go` | `Spec` 增加 `Env/Stdout/Stderr` | P0 | 低 |
 | `pkg/term/iterm2/iterm2.go` | headless 不调用；`Label` 仅在交互模式；无需大改 | P1 | 低 |
-| `README.md` / `README.zh-CN.md` | 新增后台运行章节、命令表、日志路径、安全说明 | P1 | 低 |
+| `README.md` / `README.zh-CN.md` | 新增后台运行章节、命令表、`serve` 日志 stdout 与 `run` 日志文件、仅 loopback 与关闭预算说明 | P1 | 低 |
 | `docs/DESIGN.md` | 更新进程模型、日志、生命周期、信号、headless | P1 | 低 |
 | `Makefile` | 可选 `build` 后提示；新增 `service-install`（P2） | P2 | 低 |
 
@@ -750,7 +787,7 @@ func (s *Server) Close(ctx context.Context) error
 
 ### Phase 0：基础件（可独立合并）
 
-1. `pkg/logging` + 测试：轮转、并发、Reopen。
+1. （P2 可选）`pkg/logging` + 测试：轮转、并发、Reopen。Phase 1 MVP 的 `serve` 使用 stdout，不落盘。
 2. `pkg/daemon`：Options 解析、PID flock、state 原子读写 + 测试。
 3. `pkg/term/headless` + `driver.Spec` 扩展 + 测试。
 4. `pkg/config` 新配置段与默认值；保留旧字段兼容。
@@ -760,7 +797,7 @@ func (s *Server) Close(ctx context.Context) error
 ### Phase 1：Core 生命周期重构 + serve 入口
 
 1. `pkg/core` 引入 `Options/New/Run/Addr/Reload/Snapshot`；`Core.cfg` 原子快照；监听地址可配置；gRPC health。
-2. `coordinator.go`：headless spawn、进程组优雅终止、重启循环。
+2. `coordinator.go`（后续）：serve 不启动 coordinator；run 保持现状。headless spawn/进程组优雅终止/重启循环留给后续阶段。
 3. `cmd/serve.go`：预检 → 日志 → pid 锁 → core.Run → 信号 → state → admin → 清理。
 4. `cmd/agentd.go` + `pkg/agentd`：headless、信号、优雅退出。
 5. `cmd/run.go` 迁移到新生命周期，保持交互行为。
@@ -787,65 +824,44 @@ func (s *Server) Close(ctx context.Context) error
 
 ## 7. 验收标准
 
-### 7.1 功能验收
+### 7.1 功能验收（Phase 1 MVP）
 
 1. **无 TTY 常驻**
    ```bash
-   # Linux
-   setsid ./mecha serve --workspace /path/to/project \
-     --config ~/.mecha/config.yaml --log-level info \
-     </dev/null >/dev/null 2>&1 &
-   # macOS（无 setsid 命令时）
+   # Linux / macOS
    nohup ./mecha serve --workspace /path/to/project \
      --config ~/.mecha/config.yaml --log-level info \
      </dev/null >/tmp/mecha.out 2>&1 &
    disown
    ```
-   父 shell 退出后进程仍在；`ps -o tty= -p <pid>` 为空；`/proc/<pid>/fd/0`（Linux）或 `lsof -p <pid>`（macOS）不指向 TTY；无 stdin 读取 goroutine。
-2. **任务可用**
+   父 shell 退出后进程仍在；`ps -o tty= -p <pid>` 为空；不读取 stdin。
+2. **地址发现**
+   - `127.0.0.1:0` 启动后 stdout 无条件出现 `mecha serve listening on 127.0.0.1:<port>`，`--log-level error` 时也一样。
+   - `0.0.0.0:0`、`[::]:0`、`:0`、非 loopback IP 启动失败，退出码 1。
+3. **任务可用**
    ```bash
-   ./mecha ask --addr 127.0.0.1:<port> architect "design X"
-   ./mecha chat --addr 127.0.0.1:<port> "what is the current status?"
-   ./mecha status --workspace /path/to/project
+   ./mecha ask --addr 127.0.0.1:<port> <specialist-role> "task"
    ```
-   若未实现 `Chat`，`serve` 必须支持 `--no-coordinator` 并在文档中声明只提供 specialist 任务接口。
-3. **优雅退出**
+   `serve` 不启动 coordinator；coordinator 角色由 `Ask` 拒绝。
+4. **日志可见**
+   specialist agentd 通过 `--log-stdout` 把 slog 写到 stdout，启动失败和 panic 经 headless backend 转发到 `serve` 的 stdout/stderr；`serve` 不创建日志文件。
+5. **优雅退出**
    ```bash
-   kill -TERM $(cat ~/.mecha/run/<key>.pid)
+   kill -TERM <pid>
    ```
-   进程在 `shutdown_timeout` 内退出 0；`pgrep -f 'mecha (serve|agentd)'` 为空；pid/state 文件被移除；日志含 `shutdown complete`。
-4. **重复实例**
-   同 workspace 第二次启动 → 退出码 3，错误包含已运行 pid；不产生第二个监听/子进程。
-5. **SIGHUP**
-   ```bash
-   kill -HUP $(cat ...pid)
-   ```
-   日志级别/新配置生效；已有任务不中断；无效配置只记录 error，进程不退出。
-6. **健康检查**
-   - 启动中：`/readyz` 503。
-   - coordinator ready：`/readyz` 200，`/healthz` 200，`/status` 含 coordinator/specialists。
-   - stopping：`/healthz` 503。
-7. **Coordinator 崩溃恢复**
-   `kill -TERM <coordinator agentd pid>` → `serve` 不退出；`/readyz` 503；退避后重启并恢复 200；specialist 不受影响。
-8. **日志**
-   - `core.log` 与 `agentd-*.log` 独立；`stat -f %Lp`/`stat -c %a` 为 600。
-   - 写入超过 `max_size_mb` 后生成备份文件；进程持续运行不报错。
-   - 不出现 Core 与 agentd 交叉写同一文件。
-9. **交互模式回归**
+   在没有在途任务时退出码 0；有在途任务时在 `--shutdown-timeout` 内退出，agent 进程组不残留。
+6. **交互模式回归**
    在 tmux/iTerm2/Ghostty 中 `mecha`：pane 正常创建、键盘输入转发、coordinator 退出后清理 pane，行为与改造前一致。
-10. **supervisor 托管**
-    - Linux：`systemctl --user start mecha` → `status=active`；`systemctl --user stop mecha` → 30s 内 inactive；`systemctl --user restart mecha` 正常。
-    - macOS：`launchctl bootstrap gui/$UID deploy/launchd/com.champly.mecha.plist` → `launchctl print gui/$UID/com.champly.mecha` 为 running；`bootout` 后无残留。
-11. **环境预检**
-    缺失 `HOME`、agent binary、不可写日志目录、非法监听地址 → 启动失败，退出码 1，错误信息可操作（包含需要的 flag/env）。
+
+以下为后续阶段验收，不属于 Phase 1 MVP：`chat`/`status`/`stop`、pid/state 单实例、SIGHUP 重载、admin `/healthz` `/readyz` `/status`、coordinator 崩溃重启、日志文件轮转、supervisor 模板。
 
 ### 7.2 质量门禁
 
 - `go test ./...` 全绿。
 - `go vet ./...` 通过。
 - `gofmt -l .` 为空。
-- 新增包测试覆盖：轮转、pid 锁竞争、state 原子性、headless 进程树回收、coordinator 重启、优雅关闭、admin 状态码。
-- 手工验收至少覆盖 `serve` + `ask` + SIGTERM + SIGHUP + coordinator 重启 + 日志轮转。
+- Phase 1 MVP 新增测试覆盖：headless 进程树回收、controlling terminal、有界 Wait、Core 关闭预算、loopback 校验、agentd 启动取消。
+- 手工验收覆盖 `serve` + `ask` + SIGTERM + 进程组无残留。轮转、pid/state、SIGHUP、admin、coordinator 重启属于后续阶段。
 
 ---
 
@@ -856,11 +872,11 @@ func (s *Server) Close(ctx context.Context) error
 | headless 下 agent TUI 行为差异 | 任务无法完成/readiness 卡住 | 固定 PTY 80×24/可配置；注入 `TERM=xterm-256color`；对 5 种 agent 做集成验证；保留交互模式作为对照 |
 | SIGKILL agentd 导致 agent 孤儿 | 资源泄漏、重复进程 | 正常路径 SIGTERM→等待→SIGKILL；agentd 必须优雅处理 TERM；systemd `KillMode=mixed`/launchd job 最终清理；P3 启动对账 |
 | 多实例/端口冲突 | 启动失败或写错 state | workspace-key 的 pid flock；启动前 listen；admin 端口冲突报错并提示改 `--admin-addr` |
-| Core/agentd 共享日志轮转踩踏 | 日志损坏/丢失 | 设计上每进程独立文件；Core 通过 writer 承接子进程 stderr |
+| Core/agentd 共享日志轮转踩踏 | 日志损坏/丢失 | 后续若启用文件日志，保持每进程独立文件；`serve` MVP 全部写 stdout |
 | SIGHUP 重载竞态 | 请求读到半更新配置 | `atomic.Pointer[Config]`；先 validate 再 swap；失败保留旧值 |
 | 30min 任务与 20s shutdown 冲突 | 在途任务被中止 | 文档明确；`Ask` 在 stopping 时返回 Unavailable；supervisor 超时兜底 |
 | launchd/systemd 环境缺 HOME/PATH/凭据 | agent 无法认证 | 预检 + 文档；user unit/LaunchAgent；`agents[].binary` 绝对路径；`EnvironmentFile`/plist `EnvironmentVariables` |
-| 无鉴权本地端口 | 本机任意进程可驱动 agent | 强制 loopback；非 loopback 需显式开关；文档安全警告 |
+| 无鉴权本地端口 | 本机任意进程可驱动 agent | 强制 loopback；不提供非 loopback 开关；文档安全警告 |
 | coordinator 在 daemon 下无输入通道 | 服务常驻但无法对话 | 实现 3.13 的 `Chat`，或明确 `--no-coordinator` 语义 |
 | agent 首次登录/认证需要交互 | daemon 启动后卡住或任务失败 | 文档要求先在交互终端完成 agent 登录；预检只验证 binary，不尝试认证 |
 | 日志含敏感 prompt/输出 | 信息泄露 | 0600/0700；默认丢弃 TUI 输出；不记录 env 值 |

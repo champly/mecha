@@ -21,6 +21,7 @@ func NewRootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newRunCmd())
+	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newWebhookCmd())
 	rootCmd.AddCommand(newAgentdCmd())
 	rootCmd.AddCommand(newAskCmd())

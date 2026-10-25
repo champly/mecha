@@ -19,6 +19,11 @@ const maxHookBody = 1 << 20 // 1 MiB
 
 const maxLoggedBody = 512
 
+// webhookCloseTimeout bounds Shutdown so a slow/unresponsive hook handler can
+// never delay agent process-group cleanup. It is part of agentd's 4s Close
+// budget (2s agent grace + 1s kill wait + this 1s webhook wait).
+const webhookCloseTimeout = time.Second
+
 func truncateBody(raw []byte) string {
 	s := strings.TrimSpace(string(raw))
 	if len(s) > maxLoggedBody {
@@ -73,14 +78,20 @@ func (w *WebhookServer) SetParseFunc(fn func([]byte) (agentprovider.HookEvent, e
 }
 
 // Close shuts down the HTTP server and unblocks in-flight handlers with 503,
-// so the agent's hook process never hangs. Safe to call multiple times.
+// so the agent's hook process never hangs. Shutdown is bounded by
+// webhookCloseTimeout; if it expires, active connections are force-closed so a
+// wedged handler cannot delay agent shutdown. Safe to call multiple times.
 func (w *WebhookServer) Close() error {
 	w.closeOnce.Do(func() {
 		close(w.done)
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), webhookCloseTimeout)
 	defer cancel()
-	return w.srv.Shutdown(ctx)
+	if err := w.srv.Shutdown(ctx); err != nil {
+		_ = w.srv.Close()
+		return fmt.Errorf("webhook: shutdown: %w", err)
+	}
+	return nil
 }
 
 func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {

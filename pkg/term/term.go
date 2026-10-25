@@ -4,6 +4,7 @@ package term
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/champly/mecha/pkg/term/driver"
@@ -31,6 +32,14 @@ type Options struct {
 	// interactive terminal is detected. It has no effect when Kind is set
 	// explicitly.
 	AllowHeadless bool
+	// Stdout receives child output for backends that support redirection
+	// (currently headless). Other backends ignore it. Nil means the backend
+	// default (headless discards PTY output).
+	Stdout io.Writer
+	// Stderr receives child stderr for backends that support redirection
+	// (currently headless). Other backends ignore it. Nil merges stderr into
+	// the PTY for headless.
+	Stderr io.Writer
 }
 
 // ErrUnsupported is returned when no provider matches the current environment.
@@ -56,6 +65,15 @@ func New(opts ...Options) (Backend, error) {
 			o.Kind = opt.Kind
 		}
 		o.AllowHeadless = o.AllowHeadless || opt.AllowHeadless
+		if opt.Stdout != nil {
+			o.Stdout = opt.Stdout
+		}
+		if opt.Stderr != nil {
+			o.Stderr = opt.Stderr
+		}
+	}
+	headlessConfig := func() headless.Config {
+		return headless.Config{Stdout: o.Stdout, Stderr: o.Stderr}
 	}
 
 	switch kind := strings.ToLower(strings.TrimSpace(o.Kind)); kind {
@@ -66,11 +84,11 @@ func New(opts ...Options) (Backend, error) {
 			}
 		}
 		if o.AllowHeadless {
-			return headless.New(headless.Config{}), nil
+			return headless.New(headlessConfig()), nil
 		}
 		return nil, ErrUnsupported
 	case "headless":
-		return headless.New(headless.Config{}), nil
+		return headless.New(headlessConfig()), nil
 	default:
 		for _, f := range factories {
 			if f.kind != kind {

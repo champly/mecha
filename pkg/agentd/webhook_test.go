@@ -126,3 +126,59 @@ func TestWebhookServerCloseUnblocksHandler(t *testing.T) {
 		t.Fatal("handler still blocked after Close")
 	}
 }
+
+// TestWebhookServerCloseTimeout bounds Shutdown even when a handler is wedged,
+// so agentd can always finish agent cleanup inside Core's pane budget.
+func TestWebhookServerCloseTimeout(t *testing.T) {
+	ch := make(chan agentprovider.HookEvent, 1)
+	srv, err := NewWebhookServer(ch)
+	if err != nil {
+		t.Fatalf("NewWebhookServer: %v", err)
+	}
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+		_ = srv.Close()
+	}()
+	srv.SetParseFunc(func([]byte) (agentprovider.HookEvent, error) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return agentprovider.HookEvent{Event: agentprovider.EventStop}, nil
+	})
+
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		resp, err := http.Post("http://"+srv.Addr()+"/webhook", "application/json", bytes.NewReader(nil))
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook handler did not start")
+	}
+
+	start := time.Now()
+	err = srv.Close()
+	elapsed := time.Since(start)
+	close(release)
+	released = true
+	<-clientDone
+
+	if err == nil {
+		t.Error("Close returned nil despite a wedged handler; want timeout error")
+	}
+	if elapsed > webhookCloseTimeout+500*time.Millisecond {
+		t.Errorf("Close took %v, want <= %v (+500ms tolerance)", elapsed, webhookCloseTimeout)
+	}
+	t.Logf("webhook Close timed out in %v", elapsed)
+}

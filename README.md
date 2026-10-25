@@ -45,6 +45,8 @@ Hook events: agent ──► mecha webhook ──► agentd local HTTP
   - **iTerm2** — requires the Python API: **Preferences** (`⌘,`) → **General** → **Magic** → enable **✓ Enable Python API**.
   - **Ghostty** — panes are driven via AppleScript, so a recent version with AppleScript support is required; on first spawn, macOS will ask for Automation permission for Ghostty — allow it.
 
+`mecha serve` does not need any of these: it uses private PTYs (headless mode) and never reads your terminal.
+
 ## Quick Start
 
 ```bash
@@ -62,6 +64,34 @@ mecha
 ```
 
 Then just tell the Coordinator what you want built — it takes care of decomposition and dispatch.
+
+## Background / Headless Mode (`serve`)
+
+`mecha serve` runs Core without the interactive Coordinator. It needs no TTY or terminal multiplexer: specialist agents are launched on private PTYs and driven with `mecha ask`.
+
+```bash
+# Build the binary
+go build -o mecha .
+
+# Start in the background. Logs go to stdout, so the supervisor captures them.
+nohup ./mecha serve --workspace /path/to/project --addr 127.0.0.1:50837 </dev/null >/tmp/mecha.log 2>&1 &
+
+# Dispatch a task to a specialist role (the Coordinator is not started)
+mecha ask --addr 127.0.0.1:50837 <specialist-role> "task"
+
+# Graceful shutdown
+kill -TERM <pid>
+```
+
+Notes:
+
+- `serve` does **not** start a Coordinator; only specialist roles are available. There is no `chat` command yet.
+- `serve` logs are structured `slog` text on **stdout**, and it creates no log files. Only `serve` writes process logs to stdout; plain `mecha` / `mecha run` still write to `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`. Redirect serve's stdout/stderr with nohup, systemd, or launchd. agentd logs, startup failures, and panics from specialist processes are forwarded to the same stdout/stderr, so they remain visible.
+- `--addr` defaults to `127.0.0.1:0` and accepts **loopback only**: `127.0.0.0/8`, `::1`, or `localhost`; the port must be `0`-`65535`. IPv6 must use the bracketed form, e.g. `[::1]:0` (bare `::1:0` is rejected). Empty hosts/ports, `0.0.0.0`, `::`, and non-loopback IPs are rejected. This is intentional: the unauthenticated gRPC API can drive agents.
+- When the port is dynamic, an unconditional `mecha serve listening on <addr>` line is printed to stdout even at `--log-level error`. Use a fixed `--addr` if you need a stable endpoint.
+- Other flags: `--log-level debug|info|warn|error` (default `info`) and `--shutdown-timeout` (default `10s`, minimum `5s`). The minimum leaves room for agentd's 4s Close budget (2s SIGTERM grace + 1s post-SIGKILL wait + 1s webhook shutdown) plus a 1s reserve. The global `--config <path>` selects the config file (default `~/.mecha/config.yaml`).
+- There is no pid file, `status`, `stop`, or single-instance lock yet. Starting twice is allowed; each instance must use a different `--addr` (otherwise the second one fails to bind).
+- SIGINT/SIGTERM shuts down gracefully and exits 0. Agent process groups get SIGTERM, a grace period, then SIGKILL. When a compatible local `ps` is available, agentd also snapshots the agent's descendants (`ps -axo pid=,ppid=`, falling back to `ps -A -o pid=,ppid=`) and signals those PIDs individually (best-effort), so commands that escape the group with `setsid(2)` are usually cleaned up. If `ps` is unavailable or unsupported, only process-group cleanup is guaranteed. A descendant already reparented to PID 1 before the first scan, or a new child spawned between scans whose parent exits first, cannot be traced and may survive. Pane cleanup is bounded by `--shutdown-timeout`; the final backend close escalation is separately bounded by the backend implementation.
 
 ## Configuration
 
@@ -99,7 +129,7 @@ profiles:
 
 - A role inherits `agent` by default; set `agent.name` to override it.
 - Every profile must have exactly one role with `is_coordinator: true`.
-- Logs: `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`
+- Logs: `mecha` / `mecha run` write structured text to `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`. `mecha serve` writes process logs to stdout and creates no log file; redirect with nohup/systemd/launchd.
 
 ## Commands
 
@@ -107,6 +137,7 @@ profiles:
 |---|---|
 | `mecha` / `mecha run` | Start Core + Coordinator (`--config <path>` to override the config file) |
 | `mecha init [-f]` | Write default config to `~/.mecha/config.yaml` (existing file backed up to `.bak`; `-f` overwrites without backup) |
+| `mecha serve --workspace <dir> --addr <ADDR>` | Headless Core server without a Coordinator; see [Background / Headless Mode](#background--headless-mode-serve) |
 | `mecha ask --addr <ADDR> <role> "<task>"` | Dispatch a task (used by the Coordinator, blocking) |
 | `mecha version` | Print version, build date, Go runtime |
 
@@ -114,7 +145,7 @@ profiles:
 
 ## Security
 
-All listeners (Core gRPC and the per-agentd webhook HTTP) bind to `127.0.0.1` only, but they carry **no authentication**: any process running as your user on the machine can call `Ask` and drive the agents (which run with `--dangerously-skip-permissions`-style flags). Treat mecha as a single-user local tool — do not run it on shared machines, and never expose the ports through a proxy or tunnel.
+All listeners (Core gRPC and the per-agentd webhook HTTP) bind to loopback only (`127.0.0.1` or `::1`; webhooks use `127.0.0.1`), but they carry **no authentication**: any process running as your user on the machine can call `Ask` and drive the agents (which run with `--dangerously-skip-permissions`-style flags). Treat mecha as a single-user local tool — do not run it on shared machines, and never expose the ports through a proxy or tunnel.
 
 ## Documentation
 
