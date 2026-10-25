@@ -1,5 +1,7 @@
 agent: claude-sonnet-4-6
 agents:
+  - name: codex
+    type: codex
   - name: claude-sonnet-4-6
     type: claude
     model: claude-sonnet-4-6
@@ -72,7 +74,7 @@ profiles:
           - Report design problems back to the lead as soon as you find them
           Avoid over-engineering; prefer the minimal viable implementation.
         agent:
-          name: claude-sonnet-4-6
+          name: codex
       - name: tester
         prompt: |
           You are a test engineer (tester), responsible for writing test cases for implemented features and running verification.
@@ -82,8 +84,6 @@ profiles:
           - Report defects with clear reproduction steps and expected behavior
           - Verify fixed code and confirm the problem is resolved
           Tests must be repeatable and must not depend on uncontrollable external state.
-        agent:
-          name: claude-sonnet-4-6
       - name: reviewer
         prompt: |
           You are a code reviewer, responsible for the quality review of completed code.

@@ -162,7 +162,7 @@ type Runtime struct {           // 非 yaml，启动期构造
 
 ### 3.5 默认嵌入配置
 
-`agent: claude-sonnet-4-6`，`profile: softwarecompany`。agents 定义 4 个（claude-sonnet-4-6 / claude-opus-4-8 / codebuddy / pi）；profile 含 5 个 role：`lead`（coordinator）、`architect`、`coder`、`tester`、`reviewer`。
+`agent: claude-sonnet-4-6`，`profile: softwarecompany`。agents 定义 5 个（codex / claude-sonnet-4-6 / claude-opus-4-8 / codebuddy / pi）；profile 含 5 个 role：`lead`（coordinator）、`architect`、`coder`、`tester`、`reviewer`。`coder` 显式使用 Codex；`tester` 不声明 role 级 agent，继承默认 Claude；其余 role 使用显式配置。
 
 ---
 
@@ -536,11 +536,11 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 |---|---|---|---|---|---|
 | 默认 binary | `claude` | `codex` | `gemini` | `codebuddy` | `pi` |
 | Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `.gemini/settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `.pi/settings.json` |
-| defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
+| defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` + `dangerously-bypass-hook-trust: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
 | defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=1200000` | 无 | 无 | `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
 | prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | cmd.Dir=RoleDir，CLI 自行发现 `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <prompt 原文>` + cmd.Dir=RoleDir（双路） |
 | cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | **RoleDir** | Workspace | **RoleDir** |
-| hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
+| hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
 | 注册的 hook 事件 | SessionStart / Stop / StopFailure | SessionStart / Stop / StopFailure | SessionStart（matcher startup）/ **AfterAgent**（matcher `*`） | SessionStart / Stop / StopFailure | SessionStart（startup）/ Stop（`*`） |
 | 事件映射 | 三事件同名映射 | 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
 | Stop output 字段 | `last_assistant_message` | `last_assistant_message` | `prompt_response` | `last_assistant_message` | `last_assistant_message` |

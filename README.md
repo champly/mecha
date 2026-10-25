@@ -68,8 +68,10 @@ Then just tell the Coordinator what you want built — it takes care of decompos
 Config lives at `~/.mecha/config.yaml`:
 
 ```yaml
-agent: claude-sonnet-4-6        # default agent
+agent: claude-sonnet-4-6        # default agent for roles that omit agent
 agents:
+  - name: codex
+    type: codex                 # uses Codex's configured default model
   - name: claude-sonnet-4-6
     type: claude                # claude / codex / gemini / codebuddy / pi
     model: claude-sonnet-4-6
@@ -88,10 +90,14 @@ profiles:
         prompt: |
           You are a developer (coder)...
         agent:
-          name: claude-sonnet-4-6
+          name: codex
+      - name: tester
+        prompt: |
+          You are a test engineer (tester)...
+        # Omitting agent inherits the default Claude agent.
 ```
 
-- Each role can override the default agent via `agent.name`.
+- A role inherits `agent` by default; set `agent.name` to override it.
 - Every profile must have exactly one role with `is_coordinator: true`.
 - Logs: `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`
 

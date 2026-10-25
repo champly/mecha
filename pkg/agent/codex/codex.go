@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
@@ -15,6 +14,7 @@ const codexBinary = "codex"
 
 var defaultParams = map[string]any{
 	"dangerously-bypass-approvals-and-sandbox": true,
+	"dangerously-bypass-hook-trust":            true,
 }
 
 // Codex handles the Codex CLI agent type for a specific role.
@@ -49,20 +49,16 @@ func (c *Codex) Cmd() *exec.Cmd {
 }
 
 func (c *Codex) configArgs() []string {
-	hookArgs := []string{"webhook", "--addr", c.WebhookAddr}
+	hookCommand := agentprovider.WebhookCommand(c.MechaBinary, c.WebhookAddr)
 	args := []string{
 		"--config", "model_instructions_file=" + strconv.Quote(c.agentsMdPath()),
 	}
 	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
-		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(c.MechaBinary, hookArgs))
+		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(hookCommand))
 	}
 	return args
 }
 
-func inlineHookConfig(command string, args []string) string {
-	quotedArgs := make([]string, len(args))
-	for i, arg := range args {
-		quotedArgs[i] = strconv.Quote(arg)
-	}
-	return "[{hooks=[{command=" + strconv.Quote(command) + ",args=[" + strings.Join(quotedArgs, ",") + "]}]}]"
+func inlineHookConfig(command string) string {
+	return `[{hooks=[{type="command",command=` + strconv.Quote(command) + `}]}]`
 }

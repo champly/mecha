@@ -68,8 +68,10 @@ mecha
 配置文件：`~/.mecha/config.yaml`
 
 ```yaml
-agent: claude-sonnet-4-6        # 默认 agent
+agent: claude-sonnet-4-6        # role 未指定 agent 时使用
 agents:
+  - name: codex
+    type: codex                 # 使用 Codex 自身配置的默认模型
   - name: claude-sonnet-4-6
     type: claude                # claude / codex / gemini / codebuddy / pi
     model: claude-sonnet-4-6
@@ -88,10 +90,14 @@ profiles:
         prompt: |
           You are a developer (coder)...
         agent:
-          name: claude-sonnet-4-6
+          name: codex
+      - name: tester
+        prompt: |
+          You are a test engineer (tester)...
+        # 不写 agent，自动继承默认的 Claude agent
 ```
 
-- 每个 role 可通过 `agent.name` 覆盖默认 agent。
+- role 默认继承 `agent`；可通过 `agent.name` 覆盖。
 - 每个 profile 必须且只能有一个 `is_coordinator: true` 的 role。
 - 日志：`~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`
 

@@ -77,7 +77,7 @@ func TestWriteConfig(t *testing.T) {
 	args := c.configArgs()
 
 	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
-		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{command=\"mecha\",args=[\"webhook\",\"--addr\",\"127.0.0.1:12345\"]}]}]") {
+		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{type=\"command\",command=\"mecha webhook --addr 127.0.0.1:12345\"}]}]") {
 			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
 	}
@@ -119,6 +119,9 @@ func TestCmd(t *testing.T) {
 	}
 	if !slices.Contains(cmd.Args, "--config") {
 		t.Errorf("--config should be present in args: %v", cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, "--dangerously-bypass-hook-trust") {
+		t.Errorf("--dangerously-bypass-hook-trust should be present in args: %v", cmd.Args)
 	}
 
 	for _, env := range cmd.Env {
