@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -179,5 +180,54 @@ func TestMarkStartedStateTransition(t *testing.T) {
 				t.Errorf("state = %d, want %d", got, c.want)
 			}
 		})
+	}
+}
+
+// Agent readiness is based on the agent process launching, not SessionStart:
+// Codex's TUI emits that hook lazily after its first submitted prompt.
+func TestWaitReadyWithoutSessionHook(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	stream := &fakeTaskStream{sent: make(chan *api.TaskRequest, 1)}
+	inst.attach(stream)
+	if !inst.markStarted() {
+		t.Fatal("markStarted did not advance a starting instance")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := inst.waitReady(ctx); err != nil {
+		t.Fatalf("waitReady: %v", err)
+	}
+}
+
+func TestWaitReadyCanceled(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := inst.waitReady(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitReady error = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitReadyFailsWhenAgentExits(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	inst.markExited()
+
+	err := inst.waitReady(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "agent exited before ready") {
+		t.Fatalf("waitReady error = %v, want agent exit error", err)
+	}
+}
+
+func TestWaitRegisteredCanceled(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := inst.waitRegistered(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitRegistered error = %v, want context.Canceled", err)
 	}
 }

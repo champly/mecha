@@ -76,10 +76,13 @@ func TestWriteConfig(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 	args := c.configArgs()
 
-	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
+	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop} {
 		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{type=\"command\",command=\"mecha webhook --addr 127.0.0.1:12345\"}]}]") {
 			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
+	}
+	if slices.Contains(args, "hooks.StopFailure=[{hooks=[{type=\"command\",command=\"mecha webhook --addr 127.0.0.1:12345\"}]}]") {
+		t.Errorf("config args include unsupported Codex StopFailure event: %v", args)
 	}
 	if !slices.Contains(args, "model_instructions_file=\"/ws/.mecha/roles/lead/AGENTS.md\"") {
 		t.Errorf("config args missing model_instructions_file override: %v", args)

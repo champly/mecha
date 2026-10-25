@@ -104,6 +104,11 @@ func (a *Agentd) Start() error {
 	go a.hookLoop()
 	go a.supervise()
 
+	// Report readiness after the PTY-backed agent process has launched.
+	// Codex's TUI only emits SessionStart after the first submitted prompt, so
+	// waiting for that hook would deadlock startup on an idle coordinator.
+	a.reportStatus(api.StatusStarted)
+
 	return nil
 }
 

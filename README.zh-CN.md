@@ -10,7 +10,7 @@
 - **角色由你定义**：团队以 profile 形式声明在 `~/.mecha/config.yaml` 中——每个 role 的名字、prompt、使用的 agent 都可配置。默认的 `softwarecompany` profile（lead + architect / coder / tester / reviewer）只是一个示例团队。
 - **执行过程可见**：每个 Specialist 运行在独立的 tmux / iTerm2 / Ghostty pane 中。
 - **可插拔 agent**：支持 Claude Code、Codex、Gemini、CodeBuddy、Pi，不同 role 可混用不同 agent。
-- **Hook 事件驱动**：`SessionStart` / `Stop` / `StopFailure` 事件回传 Core 驱动状态机，无需轮询。
+- **Hook 驱动任务状态**：各 agent 通过生命周期 hook 回报任务完成，同时 Core 会处理进程退出和超时，无需轮询。
 - **单二进制**：Core、agentd、CLI 都在一个 `mecha` 二进制里，无外部服务依赖。
 
 ## 运行原理

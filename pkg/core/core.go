@@ -20,7 +20,9 @@ const (
 	registerTimeout   = 5 * time.Second
 	agentStartTimeout = 30 * time.Second
 	paneKillTimeout   = 5 * time.Second
-	serverStopTimeout = 5 * time.Second
+	// paneShutdownTimeout bounds terminal cleanup after the coordinator exits.
+	// User-facing shutdown must not wait paneKillTimeout once per specialist.
+	paneShutdownTimeout = time.Second
 )
 
 // Core manages agentd instances and dispatches tasks.
@@ -109,26 +111,16 @@ func (c *Core) Start(ctx context.Context) error {
 	return err
 }
 
-// shutdown kills all specialist panes, then stops the gRPC server. Panes go
-// first so in-flight task streams close and GracefulStop can return promptly.
+// shutdown stops the gRPC server, then cleans up specialist panes. Stopping
+// RPCs first aborts outstanding asks and makes every agentd exit promptly;
+// pane cleanup is parallel and bounded so lingering AppleScript operations
+// cannot keep the interactive process alive.
 func (c *Core) shutdown() {
-	c.killAllPanes()
+	c.server.Stop()
 
-	stopped := make(chan struct{})
-	go func() {
-		c.server.GracefulStop()
-		close(stopped)
-	}()
-
-	select {
-	case <-stopped:
-	case <-time.After(serverStopTimeout):
-		c.server.Stop()
-		<-stopped
-	}
-
-	// Kill panes spawned while stopping so nothing lingers.
-	c.killAllPanes()
+	ctx, cancel := context.WithTimeout(context.Background(), paneShutdownTimeout)
+	c.killAllPanes(ctx)
+	cancel()
 
 	c.logger.Info("core shutdown complete")
 
@@ -139,18 +131,27 @@ func (c *Core) shutdown() {
 	}
 }
 
-// killAllPanes kills every specialist pane serially, each bounded by
-// paneKillTimeout (backends serialize on their own lock anyway).
-func (c *Core) killAllPanes() {
-	for _, inst := range c.registry.all() {
+// killAllPanes kills every specialist pane concurrently. The shared context
+// bounds total cleanup time; each backend still has its own upper bound.
+func (c *Core) killAllPanes(ctx context.Context) {
+	instances := c.registry.all()
+	var wg sync.WaitGroup
+	for _, inst := range instances {
 		pane := inst.pane()
 		if pane == nil {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), paneKillTimeout)
-		_ = c.backend.Kill(ctx, pane)
-		cancel()
+		wg.Add(1)
+		go func(inst *instance, pane term.Handle) {
+			defer wg.Done()
+			killCtx, cancel := context.WithTimeout(ctx, paneKillTimeout)
+			defer cancel()
+			if err := c.backend.Kill(killCtx, pane); err != nil && ctx.Err() == nil {
+				c.logger.Warn("kill pane failed", "role", inst.role, "id", inst.id, "err", err)
+			}
+		}(inst, pane)
 	}
+	wg.Wait()
 }
 
 // coordinatorRole returns the name of the profile's coordinator role.

@@ -62,8 +62,9 @@ func (s *grpcService) ReportStatus(ctx context.Context, req *api.StatusRequest) 
 
 	switch req.Status {
 	case api.StatusStarted:
-		inst.markStarted()
-		s.core.logger.Info("agent started", "role", inst.role, "id", inst.id)
+		if inst.markStarted() {
+			s.core.logger.Info("agent started", "role", inst.role, "id", inst.id)
+		}
 	case api.StatusExited:
 		inst.markExited()
 		s.core.logger.Info("agent exited", "role", inst.role, "id", inst.id)

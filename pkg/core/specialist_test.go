@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/champly/mecha/pkg/api"
 	"github.com/champly/mecha/pkg/config"
@@ -72,6 +73,23 @@ func (f *fakeBackend) killedIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.killed...)
+}
+
+// blockingKillBackend keeps Kill calls in flight so tests can verify that
+// shutdown starts all pane cleanup without serializing on one backend.
+type blockingKillBackend struct {
+	*fakeBackend
+	started chan string
+}
+
+func (b *blockingKillBackend) Kill(ctx context.Context, h term.Handle) error {
+	select {
+	case b.started <- h.PaneID():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 // newTestCore builds a Core wired to a fake backend, with a profile that has a
@@ -245,5 +263,47 @@ func TestEnsureSpecialistConcurrentRolesSpawnIndependently(t *testing.T) {
 		if insts[i] == nil {
 			t.Errorf("role %q produced no instance", r)
 		}
+	}
+}
+
+func TestKillAllPanesConcurrentAndBounded(t *testing.T) {
+	c := newTestCore(t)
+	fb := c.backend.(*fakeBackend)
+	b := &blockingKillBackend{
+		fakeBackend: fb,
+		started:     make(chan string, 2),
+	}
+	c.backend = b
+
+	for _, role := range []string{"coder", "tester"} {
+		inst := newInstance("id-"+role, role)
+		inst.setHandle(fakeHandle{id: "handle-" + role, pane: "pane-" + role})
+		c.registry.add(inst)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		c.killAllPanes(ctx)
+		close(done)
+	}()
+
+	started := make(map[string]bool)
+	for range 2 {
+		select {
+		case id := <-b.started:
+			started[id] = true
+		case <-time.After(time.Second):
+			cancel()
+			<-done
+			t.Fatalf("pane cleanup was serialized; started = %v", started)
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("killAllPanes did not return after context cancellation")
 	}
 }

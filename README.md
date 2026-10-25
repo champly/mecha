@@ -10,7 +10,7 @@ You talk to a **Coordinator**; it decomposes your request and dispatches tasks t
 - **Roles you define**: teams are declared as profiles in `~/.mecha/config.yaml` — role name, prompt, and agent per role. The default `softwarecompany` profile (lead + architect / coder / tester / reviewer) is just one example team.
 - **Live panes**: each Specialist runs in its own tmux / iTerm2 / Ghostty pane.
 - **Pluggable agents**: Claude Code, Codex, Gemini, CodeBuddy, Pi — mix different agents per role.
-- **Hook-driven state machine**: `SessionStart` / `Stop` / `StopFailure` events flow back to the Core, no polling.
+- **Hook-driven task state**: provider lifecycle hooks report task completion, while Core also detects process exits and timeouts, with no polling.
 - **Single binary**: Core, agentd, and CLI are one `mecha` binary; no external services.
 
 ## How It Works

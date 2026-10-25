@@ -68,7 +68,7 @@ mecha run
 | 任务超时（30min） | Core 侧返回错误且实例保持 unhealthy；agentd 侧直接 signalStop 自杀 |
 | agent 退出 | agentd 失败在途任务、上报 exited；Core 立即失败等待中的 Ask，实例标记 unhealthy |
 | 下次 `ask <role>` 且 unhealthy | destroy 旧实例（Kill pane），重建新 pane + 新 agentd + 新 agent |
-| Coordinator 退出 | shutdown：Kill 所有 pane → GracefulStop（5s 超时强制 Stop）→ 再兜底 Kill 一遍 → backend.Close |
+| Coordinator 退出 | shutdown：立即 Stop gRPC → 并行 Kill 所有 pane（总上限 1s）→ backend.Close |
 
 ### 2.3 约束
 
@@ -187,9 +187,8 @@ type Runtime struct {           // 非 yaml，启动期构造
        ├── waitRegistered(5s) + waitReady(30s)，失败则 Kill + Wait 收割后报错
        └── cmd.Wait() 阻塞至退出；ctx 已取消视为正常关停
 4. shutdown()
-   ├── killAllPanes()            # 第一遍：让任务流断开，GracefulStop 才能返回
-   ├── GracefulStop，5s 超时后 server.Stop() 强停
-   ├── killAllPanes()            # 第二遍：兜底关停期间新 spawn 的 pane
+   ├── server.Stop()             # 立即中断 Ask/TaskChannel，避免退出被活跃 RPC 拖住
+   ├── killAllPanes(ctx)         # 所有 pane 并行 Kill，共享 1s 总截止时间
    ├── backend.Close()
    └── logFile.Close()
 ```
@@ -253,7 +252,7 @@ mecha ask --addr <ADDR> <role> "<task>"   (unary，阻塞)
        │   └── Spawn(Spec{WorkDir, Command, Role}) 新 pane
        │       ├── waitRegistered (5s)   ─┐
        │       └── waitReady (30s)        ┴─ 任一失败 destroy 并返回错误
-       │          ready = stream attached + SessionStart（maybeReady，与到达顺序无关）
+       │          ready = TaskChannel attached + agentd 上报 PTY 已拉起（与到达顺序无关）
        └── inst.execute(ctx, task)
            ├── taskMu 加锁；快照 stream/resultCh/discCh
            ├── 状态 → busy
@@ -287,7 +286,7 @@ handleTask（串行）:
      └── 30min 超时 → 日志报错并 signalStop() 自杀（不回结果，让 Core 判 unhealthy 重建）
 ```
 
-**TUI 就绪闸门（watchReady）**：Core 的 ready（任务流 + SessionStart）在 agent 启动后约 0.3–1s 即达成，但 TUI 尚未完成初始化，此时写入 PTY 会丢回车。因此 agentd 增加第二层判定：
+**TUI 就绪闸门（watchReady）**：Core 的 ready（任务流 + PTY 进程已拉起）在 agent 启动后立即达成，但 TUI 尚未完成初始化，此时写入 PTY 会丢回车。因此 agentd 增加第二层判定（任务下发会在 `handleTask` 中等待该闸门）：
 
 - `activityWriter` 在 PTY → stdout 链路上记录最后输出时间（unix nano）
 - 每 50ms 轮询：有过输出且静默超过 **1.5s** → 判定 quiet；再固定等 **500ms** grace period（防初始化步骤间的短暂停顿误判）→ close(ready)
@@ -298,7 +297,7 @@ handleTask（串行）:
 
 | 事件 | 动作 |
 |---|---|
-| SessionStart | ReportStatus(started) |
+| SessionStart | ReportStatus(started)（幂等；Codex TUI 要到首条消息才触发，因此不再承担启动就绪职责） |
 | Stop | 有在途任务 → taskCh ← {success, output}；无任务静默丢弃 |
 | StopFailure | 有在途任务 → taskCh ← {failure, error}；无任务静默丢弃 |
 
@@ -408,7 +407,7 @@ service `api.Core`，四个方法：
 | 方法 | 类型 | 调用方 | 用途 |
 |---|---|---|---|
 | `Register` | unary | agentd → Core | 注册实例（只携带 id），返回 workspace/prompt/role/agent 配置/mecha_binary |
-| `ReportStatus` | unary | agentd → Core | 上报 `started`（SessionStart 后）/ `exited`（agent 退出后） |
+| `ReportStatus` | unary | agentd → Core | 上报 `started`（PTY 进程拉起后；SessionStart 可重复上报）/ `exited`（agent 退出后） |
 | `Ask` | unary | mecha ask → Core | 派发任务，阻塞等待结果 |
 | `TaskChannel` | bidi stream | agentd → Core | 下行 `TaskRequest`，上行 `TaskResult`；连接以 metadata `instance-id` 标识 |
 
@@ -462,7 +461,8 @@ Agent 触发 hook
        │    mecha webhook：10s 客户端超时；非 200 读最多 1 MiB 错误体
        └── POST http://<agentd-addr>/webhook
             └── agentd: parseFn(raw) → hookCh(容量32) → handleHook
-                 ├── SessionStart → ReportStatus(started) → Core: markStarted → ready
+                 ├── PTY launch    → ReportStatus(started) → Core: markStarted → ready
+                 ├── SessionStart  → ReportStatus(started)（幂等，不作为启动阻塞条件）
                  ├── Stop         → taskCh ← {success, output} → TaskResult
                  └── StopFailure  → taskCh ← {failure, error} → TaskResult
 ```
@@ -541,8 +541,8 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | cmd.Dir=RoleDir，CLI 自行发现 `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <prompt 原文>` + cmd.Dir=RoleDir（双路） |
 | cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | **RoleDir** | Workspace | **RoleDir** |
 | hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
-| 注册的 hook 事件 | SessionStart / Stop / StopFailure | SessionStart / Stop / StopFailure | SessionStart（matcher startup）/ **AfterAgent**（matcher `*`） | SessionStart / Stop / StopFailure | SessionStart（startup）/ Stop（`*`） |
-| 事件映射 | 三事件同名映射 | 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
+| 注册的 hook 事件 | SessionStart / Stop / StopFailure | SessionStart / Stop（无 StopFailure） | SessionStart（matcher startup）/ **AfterAgent**（matcher `*`） | SessionStart / Stop / StopFailure | SessionStart（startup）/ Stop（`*`） |
+| 事件映射 | 三事件同名映射 | SessionStart / Stop 同名映射 | AfterAgent → Stop | 同名映射 | 同名映射，**无 StopFailure** |
 | Stop output 字段 | `last_assistant_message` | `last_assistant_message` | `prompt_response` | `last_assistant_message` | `last_assistant_message` |
 | StopFailure error 字段 | `error_type` 优先，否则 `error` | 同 claude | —（无此事件） | 同 claude | — |
 
@@ -616,9 +616,9 @@ Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal
 | 常量 | 值 | 用途 |
 |---|---|---|
 | registerTimeout | 5s | Core 等 agentd Register |
-| agentStartTimeout | 30s | Core 等 ready（任务流挂载 + SessionStart） |
+| agentStartTimeout | 30s | Core 等 ready（任务流挂载 + PTY 进程拉起） |
 | paneKillTimeout | 5s | 单次 Kill pane |
-| serverStopTimeout | 5s | GracefulStop 兜底后强制 Stop |
+| paneShutdownTimeout | 1s | Coordinator 退出时并行 Kill 所有 pane 的总上限 |
 | TaskTimeout | 30min | 任务上限，Core/agentd 共用（`api.TaskTimeout`） |
 | readyQuietPeriod | 1.5s | agentd 输出静默判定 TUI 就绪 |
 | readyTimeout | 30s | 就绪判定兜底放行 |

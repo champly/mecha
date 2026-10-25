@@ -32,17 +32,19 @@ type instance struct {
 
 	taskMu sync.Mutex // serializes tasks
 
-	mu          sync.Mutex
-	handle      term.Handle // specialist pane; nil for the coordinator
-	stream      grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
-	resultCh    chan *api.AskResponse
-	discCh      chan struct{} // closed by detach when the stream breaks
-	streamUp    bool
-	agentUp     bool
-	registered  bool
-	registerCh  chan struct{}
-	readyClosed bool
-	readyCh     chan struct{}
+	mu           sync.Mutex
+	handle       term.Handle // specialist pane; nil for the coordinator
+	stream       grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
+	resultCh     chan *api.AskResponse
+	discCh       chan struct{} // closed by detach when the stream breaks
+	streamUp     bool
+	agentUp      bool
+	registered   bool
+	registerCh   chan struct{}
+	readyClosed  bool
+	readyCh      chan struct{}
+	exitedCh     chan struct{}
+	exitedClosed bool
 }
 
 func newInstance(id, role string) *instance {
@@ -51,6 +53,7 @@ func newInstance(id, role string) *instance {
 		role:       role,
 		registerCh: make(chan struct{}),
 		readyCh:    make(chan struct{}),
+		exitedCh:   make(chan struct{}),
 	}
 	inst.state.Store(int32(stateStarting))
 	return inst
@@ -90,22 +93,24 @@ func (inst *instance) attach(stream grpc.BidiStreamingServer[api.TaskResult, api
 	inst.maybeReady()
 }
 
-// markStarted marks the agent as started (SessionStart hook received).
-func (inst *instance) markStarted() {
+// markStarted marks the agent process as started. It returns true only when
+// this call advances a starting instance to running.
+func (inst *instance) markStarted() bool {
 	inst.mu.Lock()
 	inst.agentUp = true
 	inst.mu.Unlock()
 	inst.maybeReady()
 	// Only a starting instance becomes running: a duplicate SessionStart must
 	// not clobber busy or revive a dead agent.
-	inst.state.CompareAndSwap(int32(stateStarting), int32(stateRunning))
+	return inst.state.CompareAndSwap(int32(stateStarting), int32(stateRunning))
 }
 
 // markExited makes the instance unhealthy and unblocks an in-flight execute
 // through discCh, rather than waiting for the agentd connection to close.
 func (inst *instance) markExited() {
-	inst.closeDisc()
 	inst.state.Store(int32(stateUnhealthy))
+	inst.closeDisc()
+	inst.closeExited()
 }
 
 // maybeReady closes readyCh once both the stream and the agent are up,
@@ -128,6 +133,9 @@ func (inst *instance) waitRegistered(ctx context.Context) error {
 	case <-inst.registerCh:
 		return nil
 	case <-tctx.Done():
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fmt.Errorf("core: instance %q register timeout", inst.id)
 	}
 }
@@ -140,8 +148,16 @@ func (inst *instance) waitReady(ctx context.Context) error {
 
 	select {
 	case <-inst.readyCh:
+		if inst.state.Load() == int32(stateUnhealthy) {
+			return fmt.Errorf("core: instance %q agent exited before ready", inst.id)
+		}
 		return nil
+	case <-inst.exitedCh:
+		return fmt.Errorf("core: instance %q agent exited before ready", inst.id)
 	case <-tctx.Done():
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return fmt.Errorf("core: instance %q agent start timeout", inst.id)
 	}
 }
@@ -248,8 +264,9 @@ func (inst *instance) detach(stream grpc.BidiStreamingServer[api.TaskResult, api
 	inst.resultCh = nil
 	inst.mu.Unlock()
 
-	inst.closeDisc()
 	inst.state.Store(int32(stateUnhealthy))
+	inst.closeDisc()
+	inst.closeExited()
 }
 
 // closeDisc closes and clears discCh exactly once.
@@ -261,4 +278,15 @@ func (inst *instance) closeDisc() {
 	if discCh != nil {
 		close(discCh)
 	}
+}
+
+// closeExited wakes callers waiting for startup after the agent exits.
+func (inst *instance) closeExited() {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	if inst.exitedClosed {
+		return
+	}
+	inst.exitedClosed = true
+	close(inst.exitedCh)
 }
