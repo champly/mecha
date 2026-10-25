@@ -4,6 +4,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
 
@@ -26,6 +27,15 @@ type Spec struct {
 	WorkDir string
 	Command []string
 	Role    string
+	// Env is appended to the backend's base environment and overrides any
+	// duplicate keys. Nil means inherit the base environment unchanged.
+	Env []string
+	// Stdout receives PTY output (or the pane equivalent) for this spawn.
+	// Nil means use the backend default; backends without a default discard it.
+	Stdout io.Writer
+	// Stderr receives the child's stderr. Nil means use the backend default;
+	// headless merges it into the PTY when no sink is configured.
+	Stderr io.Writer
 }
 
 // Handle identifies a running terminal pane.

@@ -2,6 +2,7 @@ package term_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -120,4 +121,39 @@ func waitPaneCountUntil(ctx context.Context, desc string, ok func(int) bool) err
 		return err
 	}
 	return fmt.Errorf("expected %s, got %d", desc, n)
+}
+
+func TestNewHeadlessSelection(t *testing.T) {
+	backend, err := term.New(term.Options{Kind: "headless"})
+	if err != nil {
+		t.Fatalf("New(headless): %v", err)
+	}
+	defer backend.Close()
+	h, err := backend.Spawn(context.Background(), term.Spec{Command: []string{"true"}})
+	if err != nil {
+		t.Fatalf("headless Spawn: %v", err)
+	}
+	if err := backend.Kill(context.Background(), h); err != nil {
+		t.Fatalf("headless Kill: %v", err)
+	}
+}
+
+func TestNewAutoUnchangedWithoutHeadless(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TERM_PROGRAM", "")
+	if _, err := term.New(); !errors.Is(err, term.ErrUnsupported) {
+		t.Fatalf("New() = %v, want ErrUnsupported", err)
+	}
+
+	if _, err := term.New(term.Options{Kind: "unknown"}); !errors.Is(err, term.ErrUnsupported) {
+		t.Fatalf("New(unknown) = %v, want ErrUnsupported", err)
+	}
+
+	backend, err := term.New(term.Options{AllowHeadless: true})
+	if err != nil {
+		t.Fatalf("New(AllowHeadless): %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 }
