@@ -575,7 +575,7 @@ type Handle interface {
 }
 ```
 
-**检测优先级（`term.New()`）**：tmux → iTerm2 → Ghostty，取第一个 Match 的，全不匹配返回 `ErrUnsupported`。
+**检测优先级（`term.New()`）**：tmux → iTerm2 → Ghostty，auto 取第一个 Match 且 anchor 可用的后端；显式 `Kind` 返回该后端的 anchor 错误；auto 跳过 anchor 不可用的后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
 
 | 后端 | Match 条件 | 平台 |
 |---|---|---|
@@ -583,7 +583,7 @@ type Handle interface {
 | iTerm2 | `TERM_PROGRAM`（小写）包含 `iterm` | macOS |
 | Ghostty | `TERM_PROGRAM`（小写）包含 `ghostty` | macOS |
 
-**Anchor 机制**：三个后端都在初始化时钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 用 AppleScript 捕获 front window 的 focused terminal），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。
+**Anchor 机制**：三个后端都钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 在 `New()` 用 `ps`/`tty` 同步捕获进程的控制终端 tty，并在首次 Spawn 时通过 AppleScript 终端列表按 tty 懒解析出唯一 terminal id），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。anchor 不可用时三个后端一律 fail closed：返回明确错误且不创建 pane，绝不回退到 active/current focus。`New()` 阶段 anchor 不可用（`TMUX_PANE`/`ITERM_SESSION_ID` 为空、Ghostty 取不到控制 tty）会包装 `driver.ErrAnchorUnavailable`：显式 `Kind` 返回该 anchor 错误、绝不回退；auto 跳过该后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
 
 **driver.Chain**：`[]string` 栈，按分割顺序记录已 spawn pane 的原生 ID；后续分割以 `Last()` 为目标；Kill 时无论成败都 Remove（防 stale ID 成为后续分割目标）。
 
@@ -594,9 +594,9 @@ type Handle interface {
 | | tmux | iTerm2 | Ghostty |
 |---|---|---|---|
 | 通信方式 | tmux CLI | WebSocket（protobuf over unix socket） | AppleScript（`osascript -e`，无持久连接） |
-| 连接时机 | 每次调用起进程 | **New() 立即 dial**；出错置 dead，下次 Spawn/Kill 自动重拨 | 每次调用起 osascript |
+| 连接时机 | 每次调用起进程 | 首次 Spawn 时 dial；出错置 dead，下次 Spawn/Kill 自动重拨 | 每次调用起 osascript（`New()` 只捕获 tty） |
 | 认证 | 无 | osascript 取 cookie/key（10s 超时），header 携带 | macOS Automation 权限 |
-| 首个分割 | `split-window -h -p 50`（右侧） | SplitPaneRequest **VERTICAL**（右侧） | `split <anchor> direction right` |
+| 首个分割 | `split-window -h -p 50`（右侧） | SplitPaneRequest **VERTICAL**（右侧） | 按控制 tty 懒解析唯一 anchor id，再 `split <anchor> direction right` |
 | 后续分割 | `split-window -v -p 50`（下方，目标 chain.Last） | **HORIZONTAL**（下方，无比例参数） | `split <last> direction down` |
 | 新 pane ID | `-P -F #{pane_id}` 返回 | SplitPane 响应 | `split` 命令直接返回新 terminal（无计数竞态） |
 | 引导发送 | `send-keys -l <cmd>` + `C-m C-j`（CR+LF） | `SendTextRequest`（`cmd + "\r\n"`）；Role 非空时前缀 badge printf | `input text` + `send key "enter"` |
@@ -608,7 +608,7 @@ type Handle interface {
 
 iTerm2 协议细节：自增 seq 作请求 id，写超时 10s、读超时 30s，跳过 id=0 的通知帧，id 不匹配或解码失败即 fail（关连接置 dead）。socket 路径 `~/Library/Application Support/iTerm2/private/socket`，子协议 `api.iterm2.com`。
 
-Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal）；不要用 `perform action "new_split:*"` + 计数反查（异步竞态会拿到旧终端）。AppleScript 字符串先转义反斜杠再转义双引号（未转义的反斜杠会被静默吞掉）。
+Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal）；不要用 `perform action "new_split:*"` + 计数反查（异步竞态会拿到旧终端）。AppleScript 字符串先转义反斜杠再转义双引号（未转义的反斜杠会被静默吞掉）。首个 Spawn 先执行 `listTerminalsScript` 列出所有 terminal 的 `id|tty`，按本进程控制 tty 精确匹配；0 个或多个匹配即报错并放弃创建 pane。
 
 ---
 

@@ -34,3 +34,20 @@ func TestInitialInputEscapesCommand(t *testing.T) {
 		t.Errorf("initialInput leaked an unescaped backslash-newline: %q", script)
 	}
 }
+
+func TestGeneratedScriptsHaveNoFocusKeywords(t *testing.T) {
+	scripts := []string{
+		listTerminalsScript(),
+		anchorSpawnScript("ID-ANCHOR", "mecha agentd"),
+		splitSpawnScript("ID-CHILD", "mecha agentd"),
+	}
+	for _, script := range scripts {
+		lower := strings.ToLower(script)
+		if strings.Contains(lower, "front window") {
+			t.Errorf("generated script references front window: %q", script)
+		}
+		if strings.Contains(lower, "focused terminal") {
+			t.Errorf("generated script references focused terminal: %q", script)
+		}
+	}
+}

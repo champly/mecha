@@ -2,23 +2,10 @@ package tmux
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 )
-
-func currentPane(ctx context.Context) (string, error) {
-	out, err := tmux(ctx, "display-message", "-p", paneFmt)
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(out)
-	if id == "" {
-		return "", errors.New("term/tmux: empty current pane id")
-	}
-	return id, nil
-}
 
 func splitRight(ctx context.Context, target, workDir string) (string, error) {
 	out, err := tmux(ctx, splitArgs("-h", target, workDir)...)

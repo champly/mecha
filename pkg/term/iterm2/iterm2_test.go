@@ -35,3 +35,10 @@ func TestKillEmptyPaneID(t *testing.T) {
 		t.Fatal("Kill with empty pane id: expected error, got nil")
 	}
 }
+
+func TestNewFailsWithoutSession(t *testing.T) {
+	t.Setenv("ITERM_SESSION_ID", "")
+	if _, err := New(); err == nil {
+		t.Fatal("New with empty ITERM_SESSION_ID: expected error, got nil")
+	}
+}

@@ -29,23 +29,15 @@ func quoteAppleScript(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
-// firstSpawnScript splits the focused terminal of the front window and
-// returns the new terminal's id.
-func firstSpawnScript(cmdLine string) string {
-	return wrapAppleScript(app, fmt.Sprintf(`
-			set w to front window
-			set srcTerminal to focused terminal of selected tab of w
-			set newTerminal to split srcTerminal direction right%s
-			return id of newTerminal
-		`, initialInput(cmdLine, "newTerminal")))
-}
-
-// anchorScript returns the id of the front window's focused terminal,
-// captured at process start to pin where panes are spawned.
-func anchorScript() string {
+// listTerminalsScript returns every application terminal as an "id|tty" line
+// so the process's controlling tty can be mapped to a unique terminal id.
+func listTerminalsScript() string {
 	return wrapAppleScript(app, `
-			set w to front window
-			return id of focused terminal of selected tab of w
+			set out to ""
+			repeat with term in terminals
+				set out to out & (id of term) & "|" & (tty of term) & linefeed
+			end repeat
+			return out
 		`)
 }
 

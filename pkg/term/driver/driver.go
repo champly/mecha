@@ -3,6 +3,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,6 +11,11 @@ import (
 
 	"github.com/champly/mecha/pkg/shellquote"
 )
+
+// ErrAnchorUnavailable reports that a matched backend cannot determine the
+// terminal anchor (pane/session/terminal) for this process. Auto-detection
+// treats it as "try the next backend"; an explicit Kind returns it as-is.
+var ErrAnchorUnavailable = errors.New("term: anchor unavailable")
 
 // Backend is the contract that all terminal providers implement.
 type Backend interface {

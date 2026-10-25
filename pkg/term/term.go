@@ -58,6 +58,12 @@ var factories = []struct {
 // New selects a terminal backend. With no options it keeps the original
 // auto-detection behaviour; headless is only used when explicitly requested
 // (Kind == "headless") or allowed as an auto fallback (AllowHeadless).
+//
+// In auto mode, a matched backend whose anchor is unavailable
+// (driver.ErrAnchorUnavailable) is skipped and detection continues. If no
+// backend succeeds, New falls back to headless when AllowHeadless is set and
+// otherwise returns ErrUnsupported wrapped with the remembered anchor cause.
+// An explicit Kind returns its anchor error unchanged and never falls back.
 func New(opts ...Options) (Backend, error) {
 	var o Options
 	for _, opt := range opts {
@@ -78,13 +84,26 @@ func New(opts ...Options) (Backend, error) {
 
 	switch kind := strings.ToLower(strings.TrimSpace(o.Kind)); kind {
 	case "", "auto":
+		var anchorErr error
 		for _, f := range factories {
-			if f.match() {
-				return f.ctor()
+			if !f.match() {
+				continue
 			}
+			backend, err := f.ctor()
+			if err == nil {
+				return backend, nil
+			}
+			if errors.Is(err, driver.ErrAnchorUnavailable) {
+				anchorErr = err
+				continue
+			}
+			return nil, err
 		}
 		if o.AllowHeadless {
 			return headless.New(headlessConfig()), nil
+		}
+		if anchorErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUnsupported, anchorErr)
 		}
 		return nil, ErrUnsupported
 	case "headless":

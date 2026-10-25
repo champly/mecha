@@ -36,7 +36,7 @@ func (b *lockedBuffer) String() string {
 
 func TestNew(t *testing.T) {
 	backend, err := term.New()
-	if err == term.ErrUnsupported {
+	if errors.Is(err, term.ErrUnsupported) {
 		t.Skip("unsupported terminal environment")
 	}
 	if err != nil {

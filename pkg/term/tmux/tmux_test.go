@@ -13,3 +13,10 @@ func TestKillEmptyPaneID(t *testing.T) {
 		t.Fatal("Kill with empty pane id: expected error, got nil")
 	}
 }
+
+func TestNewFailsWithoutPane(t *testing.T) {
+	t.Setenv("TMUX_PANE", "")
+	if _, err := New(); err == nil {
+		t.Fatal("New with empty TMUX_PANE: expected error, got nil")
+	}
+}

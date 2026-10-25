@@ -4,6 +4,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 
@@ -25,10 +26,15 @@ type Tmux struct {
 }
 
 // New creates a new Tmux provider, pinning the anchor to this process's pane
-// (TMUX_PANE) so spawned panes stay in the coordinator's window. Spawn falls
-// back to resolving the current pane when TMUX_PANE is empty.
+// (TMUX_PANE). New fails when TMUX_PANE is empty so panes are never created
+// in another pane.
 func New() (driver.Backend, error) {
-	return &Tmux{anchorPane: os.Getenv("TMUX_PANE")}, nil
+	pane := os.Getenv("TMUX_PANE")
+	if pane == "" {
+		err := errors.New("term/tmux: TMUX_PANE is empty")
+		return nil, fmt.Errorf("%w: %w", driver.ErrAnchorUnavailable, err)
+	}
+	return &Tmux{anchorPane: pane}, nil
 }
 
 // Match reports whether the current environment is tmux.
@@ -41,11 +47,7 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 	defer t.mu.Unlock()
 
 	if t.anchorPane == "" {
-		anchor, err := currentPane(ctx)
-		if err != nil {
-			return nil, err
-		}
-		t.anchorPane = anchor
+		return nil, errors.New("term/tmux: empty anchor pane")
 	}
 
 	var paneID string

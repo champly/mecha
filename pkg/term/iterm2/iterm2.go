@@ -14,9 +14,6 @@ import (
 	"github.com/champly/mecha/pkg/term/driver"
 )
 
-// activeSession targets iTerm2's currently active session.
-const activeSession = "active"
-
 // ITerm2 is a driver.Backend backed by iTerm2 via WebSocket.
 type ITerm2 struct {
 	mu       sync.Mutex
@@ -29,10 +26,15 @@ type ITerm2 struct {
 // New creates a new ITerm2 provider. The WebSocket connection is established
 // lazily on the first Spawn, so an unavailable iTerm2 API does not prevent
 // mecha from starting. The anchor session is pinned to this process's session
-// (ITERM_SESSION_ID) so spawned panes stay in the coordinator's tab; Spawn
-// falls back to the active session when it is unavailable.
+// (ITERM_SESSION_ID); New fails when it is unavailable so panes can never
+// land in another session.
 func New() (driver.Backend, error) {
-	return &ITerm2{anchor: ownSession(), out: os.Stdout}, nil
+	anchor := ownSession()
+	if anchor == "" {
+		err := errors.New("iterm2: ITERM_SESSION_ID is empty")
+		return nil, fmt.Errorf("%w: %w", driver.ErrAnchorUnavailable, err)
+	}
+	return &ITerm2{anchor: anchor, out: os.Stdout}, nil
 }
 
 // ownSession returns the id of the iTerm2 session this process runs in,
@@ -84,6 +86,9 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.anchor == "" {
+		return nil, errors.New("iterm2: empty anchor session")
+	}
 	if err := p.ensureConn(ctx); err != nil {
 		return nil, err
 	}
@@ -92,11 +97,7 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	var err error
 	if p.sessions.Empty() {
 		// First split: split the anchor session vertically.
-		target := p.anchor
-		if target == "" {
-			target = activeSession
-		}
-		sessionID, err = p.conn.splitSession(ctx, target, true) // vertical
+		sessionID, err = p.conn.splitSession(ctx, p.anchor, true) // vertical
 	} else {
 		// Subsequent splits: split the last session horizontally.
 		sessionID, err = p.conn.splitSession(ctx, p.sessions.Last(), false) // horizontal
