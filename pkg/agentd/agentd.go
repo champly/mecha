@@ -41,6 +41,7 @@ type Agentd struct {
 
 	mu         sync.Mutex // guards ptmx, cmd and hasTask
 	hasTask    bool
+	agentType  string
 	lastOutput atomic.Int64 // unix nano of last agent output, for TUI readiness
 	closeOnce  sync.Once
 	stopOnce   sync.Once

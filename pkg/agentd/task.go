@@ -61,18 +61,19 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent not running"})
 		return
 	}
-	// Write the text and the enter key separately: sent as one string, the \r
-	// can reach the TUI before it has processed the text, so long tasks lose
-	// the enter key and stay in the input box.
-	if _, err := io.WriteString(a.ptmx, normalizeTask(req.Task)); err != nil {
+	// Write the text and the enter key separately. Codex needs explicit paste
+	// boundaries for long tasks: otherwise its paste-burst detector may still
+	// be consuming the text when the enter key arrives and discard that key.
+	payload := taskInput(a.agentType, normalizeTask(req.Task))
+	if _, err := io.WriteString(a.ptmx, payload); err != nil {
 		a.mu.Unlock()
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "write to pty: " + err.Error()})
 		return
 	}
 	a.mu.Unlock()
 
-	// Give the TUI time to ingest the text before sending the enter key.
-	time.Sleep(100 * time.Millisecond)
+	// Give the TUI time to ingest the paste before sending the enter key.
+	time.Sleep(200 * time.Millisecond)
 
 	a.mu.Lock()
 	if a.ptmx == nil {
@@ -106,6 +107,21 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 		slog.Error("agentd: task timed out, exiting so Core can respawn", "id", a.opts.ID, "task", req.Id)
 		a.signalStop()
 	}
+}
+
+const (
+	bracketedPasteStart = "\x1b[200~"
+	bracketedPasteEnd   = "\x1b[201~"
+)
+
+// taskInput wraps Codex task text in bracketed-paste markers. The markers make
+// the paste boundary explicit, so a following Enter is never interpreted as
+// part of the pasted input.
+func taskInput(agentType, task string) string {
+	if agentType == "codex" {
+		return bracketedPasteStart + task + bracketedPasteEnd
+	}
+	return task
 }
 
 // normalizeTask collapses the task onto a single line. The task is typed as

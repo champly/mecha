@@ -25,3 +25,32 @@ func TestNormalizeTask(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		task      string
+		want      string
+	}{
+		{
+			name:      "codex uses bracketed paste",
+			agentType: "codex",
+			task:      "long task",
+			want:      "\x1b[200~long task\x1b[201~",
+		},
+		{
+			name:      "other agents unchanged",
+			agentType: "claude",
+			task:      "long task",
+			want:      "long task",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := taskInput(tt.agentType, tt.task); got != tt.want {
+				t.Errorf("taskInput() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

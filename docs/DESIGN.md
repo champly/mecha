@@ -278,8 +278,9 @@ handleTask（串行）:
   1. 等 <-ready（TUI 就绪）或 <-stop（回 "agent exited during task"）
   2. ptmx == nil → "agent not running"
   3. 分两次写 PTY：先写 task 文本（normalizeTask 先把 CR/LF 折成空格、trim 成单行，
-     避免多行任务在 TUI 里提前提交），sleep 100ms，再写 "\r"
-     （一次写入时 \r 可能先于文本被 TUI 事件循环处理，长任务回车被吞）
+     避免多行任务在 TUI 里提前提交），sleep 200ms，再写 "\r"
+     （Codex 用 bracketed paste 包住文本；显式 paste 边界可避免长任务仍处于
+     paste burst 时吞掉 Enter，其他 agent 保持原文写入）
   4. select：
      ├── taskCh 收到 hook 结果 → 回 TaskResult{Id, Success, Result}
      ├── stop → "agent exited during task"
@@ -625,7 +626,7 @@ Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal
 | 就绪 grace period | 500ms | 静默后再固定等待 |
 | 就绪轮询间隔 | 50ms | watchReady |
 | PTY 启动后 sleep | 100ms | launchPTY 给 TUI 初始化 |
-| task 与回车写入间隔 | 100ms | handleTask 两次写 PTY |
+| task 与回车写入间隔 | 200ms | handleTask 两次写 PTY |
 | ReportStatus deadline | 2s | agentd 每次状态上报 |
 | webhook Shutdown | 5s | agentd 关闭 |
 | webhook body 上限 | 1 MiB | MaxBytesReader |

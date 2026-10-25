@@ -52,6 +52,7 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 	}
 
 	a.mu.Lock()
+	a.agentType = cfg.Agent.Type
 	a.ptmx = ptmx
 	a.cmd = cmd
 	a.mu.Unlock()
