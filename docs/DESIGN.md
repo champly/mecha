@@ -162,7 +162,7 @@ type Runtime struct {           // 非 yaml，启动期构造
 
 ### 3.5 默认嵌入配置
 
-`agent: claude-sonnet-4-6`，`profile: softwarecompany`。agents 定义 5 个（codex / claude-sonnet-4-6 / claude-opus-4-8 / codebuddy / pi）；profile 含 5 个 role：`lead`（coordinator）、`architect`、`coder`、`tester`、`reviewer`。`coder` 显式使用 Codex；`tester` 不声明 role 级 agent，继承默认 Claude；其余 role 使用显式配置。
+`agent: claude-sonnet-4-6`，`profile: softwarecompany`。agents 定义 5 个（codex / claude-sonnet-4-6 / claude-opus-4-8 / codebuddy / pi）；profile 含 5 个 role：`lead`（coordinator）、`architect`、`coder`、`tester`、`reviewer`。`architect` 负责设计分析与指定的 `docs/*.md` 文档，`coder` 只改代码；`coder` 显式使用 Codex；`tester` 不声明 role 级 agent，继承默认 Claude；其余 role 使用显式配置。
 
 ---
 
