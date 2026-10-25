@@ -52,8 +52,9 @@ func dial(ctx context.Context) (*conn, error) {
 	}
 
 	dialer := websocket.Dialer{
-		NetDial: func(network, addr string) (net.Conn, error) {
-			return net.Dial("unix", socketPath())
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", socketPath())
 		},
 		Subprotocols: []string{"api.iterm2.com"},
 	}

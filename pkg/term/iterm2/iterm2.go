@@ -4,7 +4,9 @@ package iterm2
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -21,18 +23,16 @@ type ITerm2 struct {
 	conn     *conn
 	anchor   string
 	sessions driver.Chain
+	out      io.Writer
 }
 
-// New creates a new ITerm2 provider and dials the WebSocket immediately. The
-// anchor session is pinned to this process's session (ITERM_SESSION_ID) so
-// spawned panes stay in the coordinator's tab; Spawn falls back to the active
-// session when it is unavailable.
+// New creates a new ITerm2 provider. The WebSocket connection is established
+// lazily on the first Spawn, so an unavailable iTerm2 API does not prevent
+// mecha from starting. The anchor session is pinned to this process's session
+// (ITERM_SESSION_ID) so spawned panes stay in the coordinator's tab; Spawn
+// falls back to the active session when it is unavailable.
 func New() (driver.Backend, error) {
-	c, err := dial(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &ITerm2{conn: c, anchor: ownSession()}, nil
+	return &ITerm2{anchor: ownSession(), out: os.Stdout}, nil
 }
 
 // ownSession returns the id of the iTerm2 session this process runs in,
@@ -62,16 +62,22 @@ func (p *ITerm2) ensureConn(ctx context.Context) error {
 	return nil
 }
 
+func badgePayload(text string) string {
+	return base64.StdEncoding.EncodeToString([]byte(text))
+}
+
 func badgeCommand(text string) string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	return fmt.Sprintf("printf '\\033]1337;SetBadgeFormat=%s\\007'", encoded)
+	return fmt.Sprintf("printf '\\033]1337;SetBadgeFormat=%s\\007'", badgePayload(text))
 }
 
 // Label implements driver.Backend; iTerm2 shows the text as the pane badge.
 func (p *ITerm2) Label(text string) error {
-	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	fmt.Printf("\x1b]1337;SetBadgeFormat=%s\x07", encoded)
-	return nil
+	out := p.out
+	if out == nil {
+		out = os.Stdout
+	}
+	_, err := fmt.Fprintf(out, "\x1b]1337;SetBadgeFormat=%s\x07", badgePayload(text))
+	return err
 }
 
 func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error) {
@@ -133,6 +139,10 @@ func (p *ITerm2) closeOrphan(ctx context.Context, sessionID string) error {
 }
 
 func (p *ITerm2) Kill(ctx context.Context, h driver.Handle) error {
+	if h == nil || h.PaneID() == "" {
+		return errors.New("iterm2: empty pane id")
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

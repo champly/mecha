@@ -3,6 +3,7 @@ package ghostty
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -23,19 +24,32 @@ type Ghostty struct {
 	mu         sync.Mutex
 	anchorTerm string
 	terminals  driver.Chain
+	anchorDone chan struct{}
 }
 
-// New creates a new Ghostty provider, pinning the anchor to this process's
-// terminal at startup so spawned panes stay in the coordinator's window. When
-// the anchor cannot be resolved, Spawn falls back to the front window.
+// New creates a new Ghostty provider. The anchor terminal is resolved in the
+// background so startup does not block on AppleScript (which may wait for the
+// macOS Automation permission prompt). Spawn waits for that resolution before
+// splitting; when no anchor is found it falls back to the front window.
 func New() (driver.Backend, error) {
-	g := &Ghostty{}
+	g := &Ghostty{anchorDone: make(chan struct{})}
+	go g.resolveAnchor()
+	return g, nil
+}
+
+// resolveAnchor pins the terminal this process started in.
+func (g *Ghostty) resolveAnchor() {
+	defer close(g.anchorDone)
+
 	ctx, cancel := context.WithTimeout(context.Background(), anchorTimeout)
 	defer cancel()
-	if out, err := runAppleScript(ctx, anchorScript()); err == nil {
-		g.anchorTerm = strings.TrimSpace(out)
+	out, err := runAppleScript(ctx, anchorScript())
+	if err != nil {
+		return
 	}
-	return g, nil
+	g.mu.Lock()
+	g.anchorTerm = strings.TrimSpace(out)
+	g.mu.Unlock()
 }
 
 // Match reports whether the current environment is Ghostty.
@@ -44,6 +58,14 @@ func Match() bool {
 }
 
 func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error) {
+	if g.anchorDone != nil {
+		select {
+		case <-g.anchorDone:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -87,6 +109,10 @@ func (g *Ghostty) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, e
 }
 
 func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {
+	if h == nil || h.PaneID() == "" {
+		return errors.New("term/ghostty: empty terminal id")
+	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	_, err := runAppleScript(ctx, closeScript(h.PaneID()))

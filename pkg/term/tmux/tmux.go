@@ -3,6 +3,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 
@@ -80,6 +81,10 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 }
 
 func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
+	if h == nil || h.PaneID() == "" {
+		return errors.New("term/tmux: empty pane id")
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	_, err := tmux(ctx, "kill-pane", "-t", h.PaneID())
