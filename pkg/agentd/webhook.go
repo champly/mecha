@@ -24,6 +24,10 @@ const maxLoggedBody = 512
 // budget (2s agent grace + 1s kill wait + this 1s webhook wait).
 const webhookCloseTimeout = time.Second
 
+// hookEnqueueTimeout keeps hook commands from blocking the agent loop when the
+// dispatcher is saturated. It is below Codex's one-second Interrupt budget.
+const hookEnqueueTimeout = 250 * time.Millisecond
+
 func truncateBody(raw []byte) string {
 	s := strings.TrimSpace(string(raw))
 	if len(s) > maxLoggedBody {
@@ -121,12 +125,16 @@ func (w *WebhookServer) handle(wr http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Never block forever: a full channel during shutdown must not wedge the
-	// agent's hook process.
+	// Never block indefinitely: a full channel must not wedge the agent's hook
+	// process, especially for ShortTimeout events such as Interrupt.
+	timer := time.NewTimer(hookEnqueueTimeout)
+	defer timer.Stop()
 	select {
 	case w.ch <- ev:
 		wr.WriteHeader(http.StatusOK)
 	case <-w.done:
 		http.Error(wr, "server shutting down", http.StatusServiceUnavailable)
+	case <-timer.C:
+		http.Error(wr, "hook queue is full", http.StatusServiceUnavailable)
 	}
 }

@@ -127,6 +127,31 @@ func TestWebhookServerCloseUnblocksHandler(t *testing.T) {
 	}
 }
 
+func TestWebhookServerQueueTimeout(t *testing.T) {
+	ch := make(chan agentprovider.HookEvent) // no reader
+	srv, err := NewWebhookServer(ch)
+	if err != nil {
+		t.Fatalf("NewWebhookServer: %v", err)
+	}
+	defer srv.Close()
+	srv.SetParseFunc(func([]byte) (agentprovider.HookEvent, error) {
+		return agentprovider.HookEvent{Event: agentprovider.EventInterrupt}, nil
+	})
+
+	start := time.Now()
+	resp, err := http.Post("http://"+srv.Addr()+"/webhook", "application/json", bytes.NewReader(nil))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("queue timeout took %v", elapsed)
+	}
+}
+
 // TestWebhookServerCloseTimeout bounds Shutdown even when a handler is wedged,
 // so agentd can always finish agent cleanup inside Core's pane budget.
 func TestWebhookServerCloseTimeout(t *testing.T) {

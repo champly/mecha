@@ -326,9 +326,6 @@ func (b *Backend) Close() error {
 	return firstErr
 }
 
-// Label is a no-op; a headless backend has no visible pane to label.
-func (b *Backend) Label(string) error { return nil }
-
 func (b *Backend) buildEnv(extra []string) []string {
 	env := make([]string, 0, len(b.baseEnv)+len(b.env)+len(extra)+3)
 	index := make(map[string]int, len(b.baseEnv)+len(b.env)+len(extra)+3)

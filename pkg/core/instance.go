@@ -32,19 +32,22 @@ type instance struct {
 
 	taskMu sync.Mutex // serializes tasks
 
-	mu           sync.Mutex
-	handle       term.Handle // specialist pane; nil for the coordinator
-	stream       grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
-	resultCh     chan *api.AskResponse
-	discCh       chan struct{} // closed by detach when the stream breaks
-	streamUp     bool
-	agentUp      bool
-	registered   bool
-	registerCh   chan struct{}
-	readyClosed  bool
-	readyCh      chan struct{}
-	exitedCh     chan struct{}
-	exitedClosed bool
+	mu            sync.Mutex
+	handle        term.Handle // specialist pane; nil for the coordinator
+	stream        grpc.BidiStreamingServer[api.TaskResult, api.TaskRequest]
+	resultCh      chan *api.AskResponse
+	discCh        chan struct{} // closed by detach when the stream breaks
+	streamUp      bool
+	agentUp       bool
+	registered    bool
+	registerCh    chan struct{}
+	readyClosed   bool
+	readyCh       chan struct{}
+	failedCh      chan struct{}
+	failedClosed  bool
+	failureReason string
+	exitedCh      chan struct{}
+	exitedClosed  bool
 }
 
 func newInstance(id, role string) *instance {
@@ -53,6 +56,7 @@ func newInstance(id, role string) *instance {
 		role:       role,
 		registerCh: make(chan struct{}),
 		readyCh:    make(chan struct{}),
+		failedCh:   make(chan struct{}),
 		exitedCh:   make(chan struct{}),
 	}
 	inst.state.Store(int32(stateStarting))
@@ -113,6 +117,21 @@ func (inst *instance) markExited() {
 	inst.closeExited()
 }
 
+// markFailed records a startup failure and wakes waitReady with its reason.
+func (inst *instance) markFailed(reason string) {
+	inst.state.Store(int32(stateUnhealthy))
+	inst.mu.Lock()
+	if inst.failureReason == "" {
+		inst.failureReason = reason
+	}
+	if !inst.failedClosed {
+		inst.failedClosed = true
+		close(inst.failedCh)
+	}
+	inst.mu.Unlock()
+	inst.closeDisc()
+}
+
 // maybeReady closes readyCh once both the stream and the agent are up,
 // regardless of arrival order.
 func (inst *instance) maybeReady() {
@@ -143,15 +162,34 @@ func (inst *instance) waitRegistered(ctx context.Context) error {
 // waitReady blocks until the instance can accept tasks (stream attached and
 // agent started) or times out.
 func (inst *instance) waitReady(ctx context.Context) error {
-	tctx, cancel := context.WithTimeout(ctx, agentStartTimeout)
-	defer cancel()
+	return inst.waitReadyWithin(ctx, agentStartTimeout)
+}
+
+// waitReadyWithin is waitReady with an explicit readiness budget. A timeout
+// <= 0 waits until ready, failure, exit, or context cancellation.
+func (inst *instance) waitReadyWithin(ctx context.Context, timeout time.Duration) error {
+	tctx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		tctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	select {
 	case <-inst.readyCh:
 		if inst.state.Load() == int32(stateUnhealthy) {
+			if reason := inst.startupFailureReason(); reason != "" {
+				return fmt.Errorf("core: instance %q failed to start: %s", inst.id, reason)
+			}
 			return fmt.Errorf("core: instance %q agent exited before ready", inst.id)
 		}
 		return nil
+	case <-inst.failedCh:
+		reason := inst.startupFailureReason()
+		if reason == "" {
+			reason = "unknown startup failure"
+		}
+		return fmt.Errorf("core: instance %q failed to start: %s", inst.id, reason)
 	case <-inst.exitedCh:
 		return fmt.Errorf("core: instance %q agent exited before ready", inst.id)
 	case <-tctx.Done():
@@ -160,6 +198,12 @@ func (inst *instance) waitReady(ctx context.Context) error {
 		}
 		return fmt.Errorf("core: instance %q agent start timeout", inst.id)
 	}
+}
+
+func (inst *instance) startupFailureReason() string {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	return inst.failureReason
 }
 
 // execute sends one task at a time and blocks for its result.

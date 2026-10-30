@@ -72,8 +72,6 @@ func (f *fakeBackend) Close() error {
 	return f.closeErr
 }
 
-func (f *fakeBackend) Label(_ string) error { return nil }
-
 func (f *fakeBackend) closeCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -202,6 +200,9 @@ func TestEnsureSpecialistLogStdoutOnlyInServeMode(t *testing.T) {
 			}
 			if got := slices.Contains(spec.Command, "--log-stdout"); got != tc.want {
 				t.Errorf("Command %v contains --log-stdout = %v, want %v", spec.Command, got, tc.want)
+			}
+			if !slices.Contains(spec.Command, "--dir") || !slices.Contains(spec.Command, c.workspace) {
+				t.Errorf("Command %v does not pin agentd to workspace %q", spec.Command, c.workspace)
 			}
 		})
 	}

@@ -24,8 +24,6 @@ type Backend interface {
 	// Close releases resources held by the backend (e.g. the iTerm2
 	// WebSocket connection). Backends without held resources return nil.
 	Close() error
-	// Label labels the pane this process runs in with text (e.g. a role name).
-	Label(text string) error
 }
 
 // Spec describes how to create a new terminal pane.
@@ -102,8 +100,9 @@ func (c *Chain) Remove(id string) {
 	}
 }
 
-// BuildCommand builds a shell command line from spec, prefixing `cd <dir> &&`
-// when WorkDir is set so backends that only type into a shell honor it.
+// BuildCommand builds a shell command line from spec. The command owns its
+// working directory (agentd takes --dir); WorkDir still reaches backends that
+// can apply it natively.
 func BuildCommand(spec Spec) string {
 	if len(spec.Command) == 0 {
 		return ""
@@ -112,9 +111,5 @@ func BuildCommand(spec Spec) string {
 	for _, arg := range spec.Command {
 		parts = append(parts, shellquote.Quote(arg))
 	}
-	cmd := strings.Join(parts, " ")
-	if spec.WorkDir != "" {
-		cmd = "cd " + shellquote.Quote(spec.WorkDir) + " && " + cmd
-	}
-	return cmd
+	return strings.Join(parts, " ")
 }

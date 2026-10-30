@@ -50,7 +50,7 @@ func (c *Core) ensureSpecialist(ctx context.Context, role string) (*instance, er
 	c.registry.add(inst)
 	c.logger.Info("spawning specialist", "role", role, "id", inst.id)
 
-	command := []string{c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.Addr()}
+	command := []string{c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.Addr(), "--dir", c.workspace}
 	if c.serve {
 		// serve forwards agentd logs to its own stdout; run keeps the
 		// historical workspace log file.

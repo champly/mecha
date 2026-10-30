@@ -1,8 +1,6 @@
 package driver
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -15,9 +13,9 @@ func TestBuildCommand(t *testing.T) {
 		{"empty command", Spec{WorkDir: "/tmp"}, ""},
 		{"command only", Spec{Command: []string{"mecha", "agentd"}}, "mecha agentd"},
 		{
-			"workdir prefix",
-			Spec{WorkDir: "/tmp/my proj", Command: []string{"mecha", "agentd"}},
-			"cd '/tmp/my proj' && mecha agentd",
+			"workdir does not add a shell prefix",
+			Spec{WorkDir: "/tmp/my proj", Command: []string{"mecha", "agentd", "--dir", "/tmp/my proj"}},
+			"mecha agentd --dir '/tmp/my proj'",
 		},
 		{
 			"args needing quotes",
@@ -29,24 +27,5 @@ func TestBuildCommand(t *testing.T) {
 		if got := BuildCommand(c.spec); got != c.want {
 			t.Errorf("%s: BuildCommand() = %q, want %q", c.name, got, c.want)
 		}
-	}
-}
-
-// TestBuildCommandWorkDirRoundTrip runs the built command in a real shell and
-// checks the cd prefix lands in the right directory even with spaces.
-func TestBuildCommandWorkDirRoundTrip(t *testing.T) {
-	dir := t.TempDir() + "/sub dir"
-	if err := exec.Command("mkdir", "-p", dir).Run(); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command("sh", "-c", BuildCommand(Spec{
-		WorkDir: dir,
-		Command: []string{"pwd"},
-	})).Output()
-	if err != nil {
-		t.Fatalf("sh -c: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != dir {
-		t.Errorf("pwd = %q, want %q", got, dir)
 	}
 }

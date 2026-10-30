@@ -21,7 +21,7 @@ import (
 
 const (
 	registerTimeout   = 5 * time.Second
-	agentStartTimeout = 30 * time.Second
+	agentStartTimeout = 45 * time.Second
 	// paneKillTimeout bounds cleanup of one unhealthy pane during a respawn.
 	// It is not the global shutdown budget.
 	paneKillTimeout = 5 * time.Second

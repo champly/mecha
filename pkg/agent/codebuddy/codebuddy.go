@@ -58,8 +58,10 @@ func (c *CodeBuddy) settings() map[string]any {
 	hookEvents := map[string]any{}
 	for _, event := range []string{
 		agentprovider.EventSessionStart,
+		agentprovider.EventPromptSubmit,
 		agentprovider.EventStop,
 		agentprovider.EventStopFailure,
+		"Notification",
 	} {
 		hookEvents[event] = []any{
 			map[string]any{

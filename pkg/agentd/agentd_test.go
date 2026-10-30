@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -105,6 +103,12 @@ func TestNewUsesLogger(t *testing.T) {
 	}
 	if New(Options{}).logger == nil {
 		t.Error("default logger is nil")
+	}
+}
+
+func TestPaneLabel(t *testing.T) {
+	if got := paneLabel("coder"); got != "\x1b]0;coder\x07" {
+		t.Fatalf("paneLabel = %q", got)
 	}
 }
 
@@ -316,158 +320,6 @@ exit 0
 		t.Errorf("process group %d still exists after Stop", leader)
 	}
 	waitPIDGone(t, child)
-}
-
-// fakeTaskStream satisfies the TaskChannel client interface without a real
-// gRPC stream, so tests can drive handleTask directly.
-type fakeTaskStream struct {
-	grpc.ClientStream
-	sent chan *api.TaskResult
-}
-
-func (s *fakeTaskStream) Send(r *api.TaskResult) error {
-	select {
-	case s.sent <- r:
-	default:
-	}
-	return nil
-}
-
-func (s *fakeTaskStream) Recv() (*api.TaskRequest, error) { return nil, io.EOF }
-
-// TestHandleTaskDoesNotHoldLockDuringPTYWrite proves handleTask releases a.mu
-// before an I/O that may block. stopAgent needs a.mu to read the agent PID and
-// close the PTY, so holding it across a blocked write would wedge shutdown and
-// let Core SIGKILL agentd before the independent-session agent is reaped.
-func TestHandleTaskDoesNotHoldLockDuringPTYWrite(t *testing.T) {
-	a := New(Options{ID: "task-write-lock", Logger: slog.New(slog.DiscardHandler)})
-	close(a.ready)
-
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = pr.Close()
-		_ = pw.Close()
-	})
-	a.mu.Lock()
-	a.ptmx = pw
-	a.mu.Unlock()
-
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
-	a.ptyWrite = func(*os.File, string) (int, error) {
-		once.Do(func() { close(entered) })
-		<-release
-		return 0, nil
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		a.handleTask(&fakeTaskStream{sent: make(chan *api.TaskResult, 2)}, &api.TaskRequest{
-			Id:   "lock-check",
-			Task: "hello",
-		})
-	}()
-
-	select {
-	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handleTask did not start the PTY write")
-	}
-
-	// The writer is blocked in ptyWrite now; a.mu must still be available.
-	locked := make(chan struct{})
-	go func() {
-		a.mu.Lock()
-		close(locked)
-		a.mu.Unlock()
-	}()
-	select {
-	case <-locked:
-	case <-time.After(time.Second):
-		t.Fatal("handleTask held a.mu across a blocking PTY write")
-	}
-
-	stopDone := make(chan struct{})
-	go func() {
-		a.Stop()
-		close(stopDone)
-	}()
-	select {
-	case <-stopDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Stop blocked behind an in-flight PTY write")
-	}
-
-	unblock()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handleTask did not return after Stop")
-	}
-}
-
-// TestStopReapsAgentWhileTaskWriteBlocks reproduces the real failure mode: the
-// agent never reads its PTY, so a large task write fills the kernel buffer and
-// blocks. Stop must still terminate the agent's process group, which is only
-// possible if handleTask does not hold a.mu while writing.
-func TestStopReapsAgentWhileTaskWriteBlocks(t *testing.T) {
-	oldGrace, oldKill := agentStopGrace, agentKillWait
-	agentStopGrace = 150 * time.Millisecond
-	agentKillWait = 500 * time.Millisecond
-	defer func() { agentStopGrace, agentKillWait = oldGrace, oldKill }()
-
-	a, cmd, _ := testAgent(t, `exec sleep 300`)
-	leader := cmd.Process.Pid
-	t.Cleanup(func() { _ = syscall.Kill(-leader, syscall.SIGKILL) })
-	close(a.ready)
-
-	writeStarted := make(chan struct{})
-	var once sync.Once
-	a.ptyWrite = func(f *os.File, s string) (int, error) {
-		once.Do(func() { close(writeStarted) })
-		return io.WriteString(f, s)
-	}
-
-	go a.handleTask(&fakeTaskStream{sent: make(chan *api.TaskResult, 2)}, &api.TaskRequest{
-		Id:   "blocked-write",
-		Task: strings.Repeat("x", 4<<20),
-	})
-
-	select {
-	case <-writeStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("handleTask did not start the PTY write")
-	}
-
-	// sleep does not consume stdin, so the 4 MiB payload cannot drain.
-	start := time.Now()
-	stopDone := make(chan struct{})
-	go func() {
-		a.Stop()
-		close(stopDone)
-	}()
-	select {
-	case <-stopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Stop blocked behind a PTY write while the agent still owns the process group")
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("Stop took %v, want bounded shutdown", elapsed)
-	}
-
-	waitAgentDone(t, a)
-	if agentGroupExists(leader) {
-		t.Errorf("process group %d still exists after Stop", leader)
-	}
-	waitPIDGone(t, leader)
 }
 
 // TestStopReapsIndependentSessionDescendant reproduces a tool that starts its

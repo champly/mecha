@@ -147,8 +147,3 @@ func (g *Ghostty) Kill(ctx context.Context, h driver.Handle) error {
 func (g *Ghostty) Close() error {
 	return nil
 }
-
-// Label implements driver.Backend; Ghostty has no badge.
-func (g *Ghostty) Label(text string) error {
-	return nil
-}

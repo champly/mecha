@@ -7,43 +7,31 @@ import (
 	"strings"
 )
 
-func splitRight(ctx context.Context, target, workDir string) (string, error) {
-	out, err := tmux(ctx, splitArgs("-h", target, workDir)...)
+func splitRight(ctx context.Context, target, workDir, command string) (string, error) {
+	out, err := tmux(ctx, splitArgs("-h", target, workDir, command)...)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
 }
 
-func splitDown(ctx context.Context, target, workDir string) (string, error) {
-	out, err := tmux(ctx, splitArgs("-v", target, workDir)...)
+func splitDown(ctx context.Context, target, workDir, command string) (string, error) {
+	out, err := tmux(ctx, splitArgs("-v", target, workDir, command)...)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
 }
 
-func splitArgs(dir, target, workDir string) []string {
+func splitArgs(dir, target, workDir, command string) []string {
 	args := []string{"split-window", dir, "-p", splitSize, "-P", "-F", paneFmt, "-t", target}
 	if workDir != "" {
 		args = append(args, "-c", workDir)
 	}
-	return args
-}
-
-func sendLiteral(ctx context.Context, paneID, text string) error {
-	if text == "" {
-		return nil
+	if command != "" {
+		args = append(args, command)
 	}
-	_, err := tmux(ctx, "send-keys", "-t", paneID, "-l", text)
-	return err
-}
-
-func sendEnter(ctx context.Context, paneID string) error {
-	// C-m (\r) alone causes carriage return without line feed.
-	// C-m followed by C-j (\n) gives the terminal both \r\n.
-	_, err := tmux(ctx, "send-keys", "-t", paneID, "C-m", "C-j")
-	return err
+	return args
 }
 
 func tmux(ctx context.Context, args ...string) (string, error) {

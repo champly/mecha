@@ -34,6 +34,7 @@ func GetInstanceID(ctx context.Context) string {
 const (
 	StatusStarted = "started"
 	StatusExited  = "exited"
+	StatusFailed  = "failed"
 
 	// TaskTimeout bounds one task on both sides of the stream, so a stuck agent
 	// cannot wedge the role forever.

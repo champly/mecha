@@ -3,17 +3,16 @@ package agentd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"sort"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/champly/mecha/pkg/agent"
+	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/api"
 	"github.com/champly/mecha/pkg/config"
 	"github.com/creack/pty"
@@ -45,6 +44,15 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 		return fmt.Errorf("prepare: %w", err)
 	}
 
+	tuiAgent, ok := ag.(agentprovider.TUIAgent)
+	if !ok {
+		return fmt.Errorf("agent type %q has no TUI profile", cfg.Agent.Type)
+	}
+	profile := tuiAgent.TUI()
+	if len(profile.SubmitKey) == 0 {
+		return fmt.Errorf("agent type %q has an empty submit key", cfg.Agent.Type)
+	}
+
 	a.webhook.SetParseFunc(ag.ParseHookEvent)
 
 	cmd := ag.Cmd()
@@ -54,7 +62,6 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 	}
 
 	a.mu.Lock()
-	a.agentType = cfg.Agent.Type
 	a.ptmx = ptmx
 	a.cmd = cmd
 	// Remember the process-group ID even after waitAgent clears cmd: a leader
@@ -64,18 +71,116 @@ func (a *Agentd) startAgent(cfg *api.RegisterResponse, webhookAddr string) error
 
 	restore := makeRawIfTerminal()
 
-	out := &activityWriter{w: os.Stdout, last: &a.lastOutput}
-	go io.Copy(out, ptmx)
+	sz, err := pty.GetsizeFull(ptmx)
+	if err != nil {
+		sz = &pty.Winsize{Rows: 24, Cols: 80}
+	}
+	parser := newScreenParser(int(sz.Rows), int(sz.Cols))
+	a.screen = parser
+
+	inputEvents := make(chan inputEvent, 64)
+	input := newInputArbiter(a.currentPTY, inputEvents, a.stop)
+	a.input = input
+	a.session = newSessionActor(sessionHost{
+		profile: profile,
+		input:   input,
+		ptmx:    a.currentPTY,
+		report:  a.reportStatus,
+		fail: func(reason string) {
+			slog.Error("agentd: startup failed", "id", a.opts.ID, "reason", reason)
+			a.signalStop()
+		},
+		logger:          a.logger,
+		userActive:      a.userActive.Load,
+		clearUserActive: func() { a.userActive.Store(false) },
+	}, a.stop, defaultSessionTiming)
+
+	go a.pumpScreenResponses(parser)
+	go a.pumpOutput(ptmx)
 	go a.forwardStdin()
 	go a.watchWinch()
-	go a.watchReady()
 	go a.waitAgent(cmd, restore)
+	go input.run()
+	go a.session.run()
+	go func() {
+		for {
+			select {
+			case <-a.stop:
+				return
+			case ev := <-inputEvents:
+				if a.screen != nil {
+					snapshot := a.screen.Snapshot()
+					ev.snapshot = &snapshot
+				}
+				a.session.enqueueInput(ev)
+			}
+		}
+	}()
 
 	return nil
 }
 
-// forwardStdin copies stdin to the PTY until shutdown. os.Stdin.Read blocks,
-// so a stray goroutine can outlive signalStop; that is harmless.
+func (a *Agentd) currentPTY() *os.File {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ptmx
+}
+
+// pumpOutput feeds the virtual terminal before writing to stdout, so a blocked
+// terminal consumer can never stop state tracking.
+func (a *Agentd) pumpOutput(ptmx *os.File) {
+	buf := make([]byte, 32*1024)
+	stdoutFailed := false
+	for {
+		n, err := ptmx.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if parser := a.screen; parser != nil {
+				if parseErr := parser.Write(chunk); parseErr != nil {
+					slog.Error("agentd: screen parser failed", "id", a.opts.ID, "err", parseErr)
+					if a.session != nil {
+						if !a.session.enqueueFatal("screen parser failed: " + parseErr.Error()) {
+							a.signalStop()
+						}
+					} else {
+						a.signalStop()
+					}
+					return
+				}
+				if a.session != nil {
+					a.session.screenChanged(parser.Snapshot())
+				}
+			}
+			if !stdoutFailed {
+				if _, writeErr := os.Stdout.Write(chunk); writeErr != nil {
+					stdoutFailed = true
+					slog.Warn("agentd: stdout write failed; continuing to drain pty", "err", writeErr)
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (a *Agentd) pumpScreenResponses(parser ScreenParser) {
+	for {
+		select {
+		case <-a.stop:
+			return
+		case response, ok := <-parser.Responses():
+			if !ok {
+				return
+			}
+			if a.input == nil || !a.input.system(response) {
+				slog.Warn("agentd: could not deliver terminal response")
+			}
+		}
+	}
+}
+
+// forwardStdin sends all terminal input through the single PTY writer.
 func (a *Agentd) forwardStdin() {
 	buf := make([]byte, 4096)
 	for {
@@ -88,64 +193,20 @@ func (a *Agentd) forwardStdin() {
 			return
 		default:
 		}
-		a.mu.Lock()
-		ptmx := a.ptmx
-		a.mu.Unlock()
-		if ptmx == nil {
+		if isTerminalReplyOnly(buf[:n]) {
+			continue
+		}
+		if isUserActivity(buf[:n]) {
+			a.userActive.Store(true)
+		}
+		if a.input == nil || !a.input.user(buf[:n]) {
+			slog.Error("agentd: input arbiter unavailable", "id", a.opts.ID)
+			a.signalStop()
 			return
 		}
-		if _, err := ptmx.Write(buf[:n]); err != nil {
-			return
+		if a.session != nil && a.userActive.Load() {
+			a.session.enqueueUserActivity()
 		}
-	}
-}
-
-// activityWriter records the time of each write, used to detect when the
-// agent's output goes quiet.
-type activityWriter struct {
-	w    io.Writer
-	last *atomic.Int64
-}
-
-func (a *activityWriter) Write(p []byte) (int, error) {
-	a.last.Store(time.Now().UnixNano())
-	return a.w.Write(p)
-}
-
-const (
-	readyQuietPeriod = 1500 * time.Millisecond
-	readyTimeout     = 30 * time.Second
-)
-
-// watchReady closes a.ready once the agent's TUI has finished its initial
-// render. Tasks written earlier land in the input box but lose the enter key.
-func (a *Agentd) watchReady() {
-	defer close(a.ready)
-
-	deadline := time.Now().Add(readyTimeout)
-	quiet := false
-	for time.Now().Before(deadline) {
-		last := a.lastOutput.Load()
-		if last != 0 && time.Since(time.Unix(0, last)) > readyQuietPeriod {
-			quiet = true
-			break
-		}
-		select {
-		case <-a.stop:
-			return
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	if !quiet {
-		slog.Warn("agent readiness wait timed out; tasks will be written anyway", "id", a.opts.ID)
-		return
-	}
-
-	// A quiet window can fall inside a pause between initialization steps, so
-	// wait a bit longer before declaring readiness.
-	select {
-	case <-a.stop:
-	case <-time.After(500 * time.Millisecond):
 	}
 }
 
@@ -160,7 +221,6 @@ func launchPTY(cmd *exec.Cmd) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start with pty: %w", err)
 	}
-	time.Sleep(time.Millisecond * 100) // give the agent a moment to initialize its TUI
 
 	return ptmx, nil
 }
@@ -194,8 +254,12 @@ func (a *Agentd) waitAgent(cmd *exec.Cmd, restore func()) {
 	}
 	restore()
 
-	if r, ok := a.takeTaskResult(taskResult{result: "agent exited during task"}); ok {
-		a.taskCh <- r
+	exitReason := ""
+	if err := cmd.ProcessState.String(); err != "" {
+		exitReason = err
+	}
+	if a.session != nil {
+		a.session.enqueueExit(exitReason)
 	}
 
 	a.mu.Lock()
@@ -518,6 +582,9 @@ func (a *Agentd) watchWinch() {
 				continue
 			}
 			pty.Setsize(ptmx, sz)
+			if a.screen != nil {
+				_ = a.screen.Resize(int(sz.Rows), int(sz.Cols))
+			}
 		}
 	}
 }

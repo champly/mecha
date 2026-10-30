@@ -59,3 +59,17 @@ func TestParseHookEvent_StopFailure(t *testing.T) {
 		t.Errorf("Error = %q, want %q", e.Error, "rate_limit")
 	}
 }
+
+func TestParseHookEvent_PromptSubmit(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+	e, err := c.ParseHookEvent([]byte(`{"session_id":"s1","prompt_id":"prompt-1","hook_event_name":"UserPromptSubmit","prompt":"do work"}`))
+	if err != nil {
+		t.Fatalf("ParseHookEvent() error: %v", err)
+	}
+	if e.Event != agentprovider.EventPromptSubmit {
+		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventPromptSubmit)
+	}
+	if e.TurnID != "prompt-1" || e.Prompt != "do work" {
+		t.Errorf("event = %+v", e)
+	}
+}

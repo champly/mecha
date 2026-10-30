@@ -183,8 +183,7 @@ func TestMarkStartedStateTransition(t *testing.T) {
 	}
 }
 
-// Agent readiness is based on the agent process launching, not SessionStart:
-// Codex's TUI emits that hook lazily after its first submitted prompt.
+// The stream and agentd's explicit ready signal can arrive in either order.
 func TestWaitReadyWithoutSessionHook(t *testing.T) {
 	inst := newInstance("inst-1", "lead")
 	stream := &fakeTaskStream{sent: make(chan *api.TaskRequest, 1)}
@@ -197,6 +196,34 @@ func TestWaitReadyWithoutSessionHook(t *testing.T) {
 	defer cancel()
 	if err := inst.waitReady(ctx); err != nil {
 		t.Fatalf("waitReady: %v", err)
+	}
+}
+
+func TestWaitReadyReturnsStartupFailureReason(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	inst.markFailed("approval required: trust this folder")
+
+	err := inst.waitReady(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "approval required: trust this folder") {
+		t.Fatalf("waitReady error = %v, want startup failure reason", err)
+	}
+}
+
+func TestWaitReadyWithoutDeadlineHonorsStartupFailure(t *testing.T) {
+	inst := newInstance("inst-1", "lead")
+	done := make(chan error, 1)
+	go func() {
+		done <- inst.waitReadyWithin(context.Background(), 0)
+	}()
+	inst.markFailed("login required")
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "login required") {
+			t.Fatalf("waitReadyWithin error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unbounded readiness wait ignored startup failure")
 	}
 }
 

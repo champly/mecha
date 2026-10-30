@@ -6,15 +6,22 @@ import (
 
 // eventMap converts Claude's hook_event_name values to internal event constants.
 var eventMap = map[string]string{
-	"SessionStart": agentprovider.EventSessionStart,
-	"Stop":         agentprovider.EventStop,
-	"StopFailure":  agentprovider.EventStopFailure,
+	"SessionStart":     agentprovider.EventSessionStart,
+	"UserPromptSubmit": agentprovider.EventPromptSubmit,
+	"Stop":             agentprovider.EventStop,
+	"StopFailure":      agentprovider.EventStopFailure,
+	"Notification":     agentprovider.EventInteraction,
 }
 
 // ParseHookEvent parses raw Claude hook JSON into a unified HookEvent.
 // Reference: https://code.claude.com/docs/en/hooks
 func (c *Claude) ParseHookEvent(raw []byte) (agentprovider.HookEvent, error) {
 	return agentprovider.ParseHook("claude", raw, eventMap, func(m map[string]any, e *agentprovider.HookEvent) {
+		if e.TurnID == "" {
+			if promptID, ok := m["prompt_id"].(string); ok {
+				e.TurnID = promptID
+			}
+		}
 		switch e.Event {
 		case agentprovider.EventStop:
 			if msg, ok := m["last_assistant_message"].(string); ok && msg != "" {

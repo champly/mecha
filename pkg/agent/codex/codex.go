@@ -54,8 +54,13 @@ func (c *Codex) configArgs() []string {
 		"--config", "model_instructions_file=" + strconv.Quote(c.agentsMdPath()),
 	}
 	// Current Codex does not define StopFailure; an abnormal turn is detected
-	// by the agent process exiting or by the task timeout.
-	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop} {
+	// by the agent process exiting, Interrupt, or the task timeout.
+	for _, event := range []string{
+		agentprovider.EventSessionStart,
+		agentprovider.EventPromptSubmit,
+		agentprovider.EventStop,
+		agentprovider.EventInterrupt,
+	} {
 		args = append(args, "--config", "hooks."+event+"="+inlineHookConfig(hookCommand))
 	}
 	return args

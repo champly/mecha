@@ -90,10 +90,23 @@ func TestWriteSettings(t *testing.T) {
 	if !strings.Contains(string(data), c.WebhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
-	for _, event := range []string{agentprovider.EventSessionStart, eventAfterAgent} {
+	for _, event := range []string{agentprovider.EventSessionStart, eventBeforeAgent, eventAfterAgent, "Notification"} {
 		if !strings.Contains(string(data), event) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}
+	}
+}
+
+func TestParseHookEvent_BeforeAgent(t *testing.T) {
+	raw := []byte(`{"session_id":"s1","hook_event_name":"BeforeAgent","prompt":"do work"}`)
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+
+	e, err := c.ParseHookEvent(raw)
+	if err != nil {
+		t.Fatalf("ParseHookEvent() error: %v", err)
+	}
+	if e.Event != agentprovider.EventPromptSubmit || e.Prompt != "do work" {
+		t.Errorf("event = %+v", e)
 	}
 }
 

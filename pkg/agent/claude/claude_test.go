@@ -91,7 +91,13 @@ func TestWriteSettings(t *testing.T) {
 	if !strings.Contains(string(data), c.WebhookAddr) {
 		t.Errorf("settings.json missing webhook addr, got: %s", data)
 	}
-	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
+	for _, event := range []string{
+		agentprovider.EventSessionStart,
+		agentprovider.EventPromptSubmit,
+		agentprovider.EventStop,
+		agentprovider.EventStopFailure,
+		"Notification",
+	} {
 		if !strings.Contains(string(data), event) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}

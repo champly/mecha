@@ -9,15 +9,23 @@ import (
 
 const (
 	EventSessionStart = "SessionStart"
+	EventPromptSubmit = "UserPromptSubmit"
 	EventStop         = "Stop"
 	EventStopFailure  = "StopFailure"
+	EventInterrupt    = "Interrupt"
+	EventInteraction  = "InteractionRequired"
 )
 
 type HookEvent struct {
-	Event     string `json:"event"`
-	SessionID string `json:"session_id,omitempty"`
-	Output    string `json:"output,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Event            string `json:"event"`
+	SessionID        string `json:"session_id,omitempty"`
+	TurnID           string `json:"turn_id,omitempty"`
+	Prompt           string `json:"prompt,omitempty"`
+	Source           string `json:"source,omitempty"`
+	Output           string `json:"output,omitempty"`
+	Error            string `json:"error,omitempty"`
+	NotificationType string `json:"notification_type,omitempty"`
+	Message          string `json:"message,omitempty"`
 }
 
 // WebhookCommand returns the shell command line an agent hook runs to deliver
@@ -48,6 +56,21 @@ func ParseHook(prefix string, raw []byte, eventMap map[string]string, extract fu
 	e := HookEvent{Event: event}
 	if sid, ok := m["session_id"].(string); ok {
 		e.SessionID = sid
+	}
+	if turnID, ok := m["turn_id"].(string); ok {
+		e.TurnID = turnID
+	}
+	if prompt, ok := m["prompt"].(string); ok {
+		e.Prompt = prompt
+	}
+	if source, ok := m["source"].(string); ok {
+		e.Source = source
+	}
+	if notificationType, ok := m["notification_type"].(string); ok {
+		e.NotificationType = notificationType
+	}
+	if message, ok := m["message"].(string); ok {
+		e.Message = message
 	}
 	if extract != nil {
 		extract(m, &e)

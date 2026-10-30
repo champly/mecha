@@ -3,13 +3,12 @@ package iterm2
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/champly/mecha/pkg/term/driver"
 )
@@ -20,7 +19,6 @@ type ITerm2 struct {
 	conn     *conn
 	anchor   string
 	sessions driver.Chain
-	out      io.Writer
 }
 
 // New creates a new ITerm2 provider. The WebSocket connection is established
@@ -34,8 +32,12 @@ func New() (driver.Backend, error) {
 		err := errors.New("iterm2: ITERM_SESSION_ID is empty")
 		return nil, fmt.Errorf("%w: %w", driver.ErrAnchorUnavailable, err)
 	}
-	return &ITerm2{anchor: anchor, out: os.Stdout}, nil
+	return &ITerm2{anchor: anchor}, nil
 }
+
+// screenWait bounds how long a fresh pane may take to print its first prompt
+// before agentd's command is typed into the shell.
+const screenWait = 10 * time.Second
 
 // ownSession returns the id of the iTerm2 session this process runs in,
 // parsed from ITERM_SESSION_ID ("w0t0p0:GUID"). Empty when unavailable.
@@ -64,24 +66,6 @@ func (p *ITerm2) ensureConn(ctx context.Context) error {
 	return nil
 }
 
-func badgePayload(text string) string {
-	return base64.StdEncoding.EncodeToString([]byte(text))
-}
-
-func badgeCommand(text string) string {
-	return fmt.Sprintf("printf '\\033]1337;SetBadgeFormat=%s\\007'", badgePayload(text))
-}
-
-// Label implements driver.Backend; iTerm2 shows the text as the pane badge.
-func (p *ITerm2) Label(text string) error {
-	out := p.out
-	if out == nil {
-		out = os.Stdout
-	}
-	_, err := fmt.Fprintf(out, "\x1b]1337;SetBadgeFormat=%s\x07", badgePayload(text))
-	return err
-}
-
 func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -107,8 +91,11 @@ func (p *ITerm2) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, er
 	}
 
 	if cmd := driver.BuildCommand(spec); cmd != "" {
-		if spec.Role != "" {
-			cmd = badgeCommand(spec.Role) + " && " + cmd
+		if err := p.conn.awaitScreen(ctx, sessionID, screenWait); err != nil {
+			if cerr := p.closeOrphan(ctx, sessionID); cerr != nil {
+				p.sessions.Push(sessionID)
+			}
+			return nil, err
 		}
 		// \r\n returns the cursor to column 0 and moves down a line; \n alone
 		// does not.

@@ -4,13 +4,18 @@ import (
 	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 )
 
-// eventAfterAgent carries the assistant response and maps to EventStop.
-const eventAfterAgent = "AfterAgent"
+const (
+	eventBeforeAgent = "BeforeAgent"
+	// eventAfterAgent carries the assistant response and maps to EventStop.
+	eventAfterAgent = "AfterAgent"
+)
 
 // eventMap converts Gemini CLI's hook_event_name values to internal event constants.
 var eventMap = map[string]string{
-	"SessionStart":  agentprovider.EventSessionStart,
-	eventAfterAgent: agentprovider.EventStop,
+	"SessionStart":   agentprovider.EventSessionStart,
+	eventBeforeAgent: agentprovider.EventPromptSubmit,
+	eventAfterAgent:  agentprovider.EventStop,
+	"Notification":   agentprovider.EventInteraction,
 }
 
 // ParseHookEvent parses raw Gemini CLI hook JSON into a unified HookEvent.

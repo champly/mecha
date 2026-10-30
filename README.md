@@ -149,4 +149,5 @@ All listeners (Core gRPC and the per-agentd webhook HTTP) bind to loopback only 
 
 ## Documentation
 
-Full design details: [docs/DESIGN.md](docs/DESIGN.md)
+- Current system behavior: [docs/DESIGN.md](docs/DESIGN.md)
+- Future daemon and IM roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)

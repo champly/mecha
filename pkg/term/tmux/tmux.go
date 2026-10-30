@@ -49,33 +49,17 @@ func (t *Tmux) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, erro
 	if t.anchorPane == "" {
 		return nil, errors.New("term/tmux: empty anchor pane")
 	}
+	command := driver.BuildCommand(spec)
 
 	var paneID string
 	var err error
 	if t.panes.Empty() {
-		paneID, err = splitRight(ctx, t.anchorPane, spec.WorkDir)
+		paneID, err = splitRight(ctx, t.anchorPane, spec.WorkDir, command)
 	} else {
-		paneID, err = splitDown(ctx, t.panes.Last(), spec.WorkDir)
+		paneID, err = splitDown(ctx, t.panes.Last(), spec.WorkDir, command)
 	}
 	if err != nil {
 		return nil, err
-	}
-
-	if cmd := driver.BuildCommand(spec); cmd != "" {
-		if err := sendLiteral(ctx, paneID, cmd); err != nil {
-			// The split already happened; destroy the pane, tracking it only
-			// when that fails.
-			if _, kerr := tmux(ctx, "kill-pane", "-t", paneID); kerr != nil {
-				t.panes.Push(paneID)
-			}
-			return nil, err
-		}
-		if err := sendEnter(ctx, paneID); err != nil {
-			if _, kerr := tmux(ctx, "kill-pane", "-t", paneID); kerr != nil {
-				t.panes.Push(paneID)
-			}
-			return nil, err
-		}
 	}
 
 	t.panes.Push(paneID)
@@ -97,10 +81,5 @@ func (t *Tmux) Kill(ctx context.Context, h driver.Handle) error {
 
 // Close implements driver.Backend; tmux holds no resources.
 func (t *Tmux) Close() error {
-	return nil
-}
-
-// Label implements driver.Backend; tmux has no badge.
-func (t *Tmux) Label(text string) error {
 	return nil
 }

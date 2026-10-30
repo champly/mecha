@@ -12,7 +12,7 @@ import (
 )
 
 func newAgentdCmd() *cobra.Command {
-	var id, addr string
+	var id, addr, dir string
 	var logStdout bool
 
 	cmd := &cobra.Command{
@@ -24,6 +24,11 @@ func newAgentdCmd() *cobra.Command {
 			}
 			if addr == "" {
 				return fmt.Errorf("agentd: --addr is required")
+			}
+			if dir != "" {
+				if err := os.Chdir(dir); err != nil {
+					return fmt.Errorf("agentd: --dir: %w", err)
+				}
 			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -51,6 +56,7 @@ func newAgentdCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&id, "id", "", "Agentd instance ID")
 	cmd.Flags().StringVar(&addr, "addr", "", "Core address (host:port)")
+	cmd.Flags().StringVar(&dir, "dir", "", "Working directory for agentd and its agent")
 	cmd.Flags().BoolVar(&logStdout, "log-stdout", false, "Write agentd logs to stdout instead of the workspace log file")
 	return cmd
 }

@@ -17,16 +17,12 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 		return fmt.Errorf("core: no coordinator role found")
 	}
 
-	if err := c.backend.Label(roleName); err != nil {
-		c.logger.Warn("label coordinator pane", "role", roleName, "err", err)
-	}
-
 	inst := newInstance(uuid.NewString(), roleName)
 	c.registry.add(inst)
 
 	c.logger.Info("launching coordinator", "role", roleName, "id", inst.id)
 
-	cmd := exec.Command(c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.Addr())
+	cmd := exec.Command(c.mechaBinary, "agentd", "--id", inst.id, "--addr", c.Addr(), "--dir", c.workspace)
 	cmd.Dir = c.workspace
 
 	// Attach the terminal: agentd relays the agent PTY to its own stdio.
@@ -55,7 +51,10 @@ func (c *Core) launchCoordinator(ctx context.Context) error {
 		return fail(err)
 	}
 
-	if err := inst.waitReady(ctx); err != nil {
+	// No startup deadline for the coordinator: the user can see this pane and
+	// may need to answer a first-run trust or login dialog. An explicit
+	// startup failure or agent exit still ends the wait immediately.
+	if err := inst.waitReadyWithin(ctx, 0); err != nil {
 		return fail(err)
 	}
 	c.logger.Info("coordinator ready", "role", roleName)

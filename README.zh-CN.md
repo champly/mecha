@@ -149,4 +149,5 @@ profiles:
 
 ## 文档
 
-完整设计细节：[docs/DESIGN.md](docs/DESIGN.md)
+- 当前系统实现：[docs/DESIGN.md](docs/DESIGN.md)
+- 后续 daemon 与 IM 路线：[docs/ROADMAP.md](docs/ROADMAP.md)

@@ -155,6 +155,55 @@ func (c *conn) splitSession(ctx context.Context, sessionID string, vertical bool
 	return sids[0], nil
 }
 
+// getBuffer returns the session's visible screen text.
+func (c *conn) getBuffer(ctx context.Context, sessionID string) (string, error) {
+	screenOnly := true
+	resp, err := c.call(ctx, &api.ClientOriginatedMessage{
+		Submessage: &api.ClientOriginatedMessage_GetBufferRequest{
+			GetBufferRequest: &api.GetBufferRequest{
+				Session:   &sessionID,
+				LineRange: &api.LineRange{ScreenContentsOnly: &screenOnly},
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if st := resp.GetGetBufferResponse().GetStatus(); st != api.GetBufferResponse_OK {
+		return "", fmt.Errorf("iterm2: get buffer: status %v", st)
+	}
+	lines := make([]string, 0, len(resp.GetGetBufferResponse().GetContents()))
+	for _, line := range resp.GetGetBufferResponse().GetContents() {
+		lines = append(lines, line.GetText())
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// awaitScreen waits for a freshly split shell to render its prompt. Sending
+// text earlier can make the line discipline echo the command before the prompt.
+func (c *conn) awaitScreen(ctx context.Context, sessionID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		text, err := c.getBuffer(ctx, sessionID)
+		if err == nil && strings.TrimSpace(text) != "" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return err
+			}
+			// Some custom shells render no prompt text. Preserve the historical
+			// send behavior rather than failing the spawn indefinitely.
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 func (c *conn) sendText(ctx context.Context, sessionID, text string) error {
 	_, err := c.call(ctx, &api.ClientOriginatedMessage{
 		Submessage: &api.ClientOriginatedMessage_SendTextRequest{

@@ -39,6 +39,7 @@ func testNew(workspace, roleDir, prompt string) *Codex {
 }
 
 var _ agentprovider.Agent = (*Codex)(nil)
+var _ agentprovider.TUIAgent = (*Codex)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -51,6 +52,29 @@ func TestNew(t *testing.T) {
 	}
 	if c.Prompt != "test prompt" {
 		t.Errorf("prompt = %q, want %q", c.Prompt, "test prompt")
+	}
+}
+
+func TestTUIClassifyProviderState(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+	profile := c.TUI()
+
+	if got := profile.Classify(agentprovider.ScreenSnapshot{AppState: "working"}); got.State != agentprovider.InputBusy {
+		t.Errorf("working state = %s, want busy", got.State)
+	}
+	if got := profile.Classify(agentprovider.ScreenSnapshot{AppState: "idle"}); got.State != agentprovider.InputEmpty {
+		t.Errorf("idle state = %s, want empty", got.State)
+	}
+}
+
+func TestTUIClassifyCurrentEmptyPrompt(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+	got := c.TUI().Classify(agentprovider.ScreenSnapshot{
+		AppState: "idle",
+		Rows:     []string{"› Ask Codex to do anything", "? for shortcuts"},
+	})
+	if got.State != agentprovider.InputEmpty {
+		t.Errorf("current empty prompt = %s, want empty (%+v)", got.State, got)
 	}
 }
 
@@ -76,7 +100,12 @@ func TestWriteConfig(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 	args := c.configArgs()
 
-	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop} {
+	for _, event := range []string{
+		agentprovider.EventSessionStart,
+		agentprovider.EventPromptSubmit,
+		agentprovider.EventStop,
+		agentprovider.EventInterrupt,
+	} {
 		if !slices.Contains(args, "hooks."+event+"=[{hooks=[{type=\"command\",command=\"mecha webhook --addr 127.0.0.1:12345\"}]}]") {
 			t.Errorf("config args missing hook event %q: %v", event, args)
 		}
@@ -86,6 +115,26 @@ func TestWriteConfig(t *testing.T) {
 	}
 	if !slices.Contains(args, "model_instructions_file=\"/ws/.mecha/roles/lead/AGENTS.md\"") {
 		t.Errorf("config args missing model_instructions_file override: %v", args)
+	}
+}
+
+func TestParseHookEvent_PromptSubmitAndInterrupt(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+
+	e, err := c.ParseHookEvent([]byte(`{"hook_event_name":"UserPromptSubmit","session_id":"s1","turn_id":"turn-1","prompt":"do work"}`))
+	if err != nil {
+		t.Fatalf("ParseHookEvent prompt: %v", err)
+	}
+	if e.Event != agentprovider.EventPromptSubmit || e.TurnID != "turn-1" || e.Prompt != "do work" {
+		t.Errorf("prompt event = %+v", e)
+	}
+
+	e, err = c.ParseHookEvent([]byte(`{"hook_event_name":"Interrupt","session_id":"s1","turn_id":"turn-1"}`))
+	if err != nil {
+		t.Fatalf("ParseHookEvent interrupt: %v", err)
+	}
+	if e.Event != agentprovider.EventInterrupt || e.TurnID != "turn-1" {
+		t.Errorf("interrupt event = %+v", e)
 	}
 }
 
@@ -172,22 +221,12 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	}
 }
 
-func TestParseHookEvent_StopFailure(t *testing.T) {
+func TestParseHookEvent_StopFailureUnsupported(t *testing.T) {
 	raw := []byte(`{"session_id":"deadbeef","hook_event_name":"StopFailure","error_type":"overloaded"}`)
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
 
-	e, err := c.ParseHookEvent(raw)
-	if err != nil {
-		t.Fatalf("ParseHookEvent() error: %v", err)
-	}
-	if e.Event != agentprovider.EventStopFailure {
-		t.Errorf("Event = %q, want %q", e.Event, agentprovider.EventStopFailure)
-	}
-	if e.SessionID != "deadbeef" {
-		t.Errorf("SessionID = %q, want %q", e.SessionID, "deadbeef")
-	}
-	if e.Error != "overloaded" {
-		t.Errorf("Error = %q, want %q", e.Error, "overloaded")
+	if _, err := c.ParseHookEvent(raw); err == nil {
+		t.Fatal("ParseHookEvent accepted unsupported Codex StopFailure event")
 	}
 }
 

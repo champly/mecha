@@ -61,7 +61,29 @@ func (g *Gemini) settings() map[string]any {
 					},
 				},
 			},
+			eventBeforeAgent: []any{
+				map[string]any{
+					"matcher": "*",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": webhookCmd,
+						},
+					},
+				},
+			},
 			eventAfterAgent: []any{
+				map[string]any{
+					"matcher": "*",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": webhookCmd,
+						},
+					},
+				},
+			},
+			"Notification": []any{
 				map[string]any{
 					"matcher": "*",
 					"hooks": []any{

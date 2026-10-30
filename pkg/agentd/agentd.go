@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/term"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -55,30 +56,37 @@ type Agentd struct {
 	webhook *WebhookServer
 	hookCh  chan agentprovider.HookEvent
 
-	ptmx     *os.File
-	cmd      *exec.Cmd
-	logFile  *os.File
-	agentPID int
-	taskCh   chan taskResult
-	stop     chan struct{}
-	ready    chan struct{}
+	ptmx       *os.File
+	cmd        *exec.Cmd
+	logFile    *os.File
+	agentPID   int
+	stop       chan struct{}
+	screen     ScreenParser
+	input      *inputArbiter
+	session    *sessionActor
+	userActive atomic.Bool
 
 	// agentDone closes after waitAgent has reaped the agent leader. It lets
 	// Close bound its wait without ever calling cmd.Wait twice.
 	agentDone chan struct{}
 
-	mu           sync.Mutex // guards ptmx, cmd, hasTask and streamCancel
+	mu           sync.Mutex // guards ptmx, cmd and streamCancel
 	streamCancel context.CancelFunc
-	hasTask      bool
-	agentType    string
-	// ptyWrite is a test seam for observing task PTY writes. It must be set
-	// before tasks start and is read-only afterwards; nil writes directly to
-	// the PTY.
-	ptyWrite   func(*os.File, string) (int, error)
-	lastOutput atomic.Int64 // unix nano of last agent output, for TUI readiness
-	closeOnce  sync.Once
-	stopOnce   sync.Once
-	closed     chan struct{} // closed when Close finishes
+	closeOnce    sync.Once
+	stopOnce     sync.Once
+	closed       chan struct{} // closed when Close finishes
+
+	statusCh       chan statusReport
+	statusStop     chan struct{}
+	statusOnce     sync.Once
+	statusStopOnce sync.Once
+	statusWG       sync.WaitGroup
+}
+
+type statusReport struct {
+	status string
+	reason string
+	done   chan struct{}
 }
 
 // signalStop closes stop exactly once, so a dead Core cannot orphan this
@@ -96,14 +104,14 @@ func New(opts Options) *Agentd {
 		logger = defaultLogger()
 	}
 	return &Agentd{
-		opts:      opts,
-		logger:    logger,
-		stop:      make(chan struct{}),
-		ready:     make(chan struct{}),
-		taskCh:    make(chan taskResult, 1),
-		hookCh:    make(chan agentprovider.HookEvent, 32),
-		agentDone: make(chan struct{}),
-		closed:    make(chan struct{}),
+		opts:       opts,
+		logger:     logger,
+		stop:       make(chan struct{}),
+		hookCh:     make(chan agentprovider.HookEvent, 32),
+		agentDone:  make(chan struct{}),
+		closed:     make(chan struct{}),
+		statusCh:   make(chan statusReport, 16),
+		statusStop: make(chan struct{}),
 	}
 }
 
@@ -144,6 +152,7 @@ func (a *Agentd) Start() error {
 	if a.initLogging() {
 		slog.SetDefault(a.logger)
 	}
+	a.startStatusLoop()
 
 	wh, err := NewWebhookServer(a.hookCh)
 	if err != nil {
@@ -166,13 +175,7 @@ func (a *Agentd) Start() error {
 		a.Close()
 		return fmt.Errorf("agentd: register: %w", err)
 	}
-
-	// Open the task channel before launching the agent so Core can dispatch
-	// tasks as soon as the instance reports ready.
-	if err := a.connectTaskChannel(); err != nil {
-		a.Close()
-		return err
-	}
+	a.labelPane(cfg.RoleName)
 
 	// A signal may arrive after the RPCs but before the agent starts.
 	if err := a.baseContext().Err(); err != nil {
@@ -185,21 +188,36 @@ func (a *Agentd) Start() error {
 		return fmt.Errorf("agentd: start agent: %w", err)
 	}
 
+	// The session only reports Started after the TUI is positively ready, so
+	// opening the stream after launching the process cannot allow early writes.
+	if err := a.connectTaskChannel(); err != nil {
+		a.Close()
+		return err
+	}
+
 	go a.hookLoop()
 	go a.supervise()
 
-	// Report readiness after the PTY-backed agent process has launched.
-	// Codex's TUI only emits SessionStart after the first submitted prompt, so
-	// waiting for that hook would deadlock startup on an idle coordinator.
-	a.reportStatus(api.StatusStarted)
-
 	return nil
+}
+
+func paneLabel(role string) string {
+	return "\x1b]0;" + role + "\x07"
+}
+
+// labelPane writes an OSC title to the pane's terminal. serve/headless runs
+// skip it so escape sequences never leak into captured logs.
+func (a *Agentd) labelPane(role string) {
+	if a.opts.LogStdout || role == "" || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
+	_, _ = fmt.Fprint(os.Stdout, paneLabel(role))
 }
 
 // supervise waits for the agent to exit and performs orderly shutdown.
 func (a *Agentd) supervise() {
 	<-a.stop
-	a.reportStatus(api.StatusExited)
+	a.reportStatus(api.StatusExited, "")
 	a.Close()
 }
 
@@ -248,6 +266,7 @@ func (a *Agentd) Close() {
 		// bounded by 2s grace + 1s post-SIGKILL wait, keeping agentd inside
 		// Core's minimum 5s pane budget even before webhook/conn teardown.
 		a.stopAgent()
+		a.stopStatusLoop()
 
 		// Cancel the long-lived TaskChannel stream before closing the
 		// connection so Recv unblocks even if the transport is wedged.
@@ -295,36 +314,54 @@ func (a *Agentd) hookLoop() {
 
 // handleHook handles a single webhook event from the agent process.
 func (a *Agentd) handleHook(ev agentprovider.HookEvent) {
-	switch ev.Event {
-	case agentprovider.EventSessionStart:
-		a.reportStatus(api.StatusStarted)
+	if a.session == nil {
+		slog.Warn("agentd: hook received before session started", "event", ev.Event)
+		return
+	}
+	if !a.session.enqueueHook(ev) {
+		slog.Warn("agentd: session event queue unavailable", "event", ev.Event)
+	}
+}
 
-	case agentprovider.EventStop:
-		if r, ok := a.takeTaskResult(taskResult{success: true, result: ev.Output}); ok {
-			a.taskCh <- r
-		}
+func (a *Agentd) startStatusLoop() {
+	a.statusOnce.Do(func() {
+		a.statusWG.Add(1)
+		go func() {
+			defer a.statusWG.Done()
+			a.statusLoop()
+		}()
+	})
+}
 
-	case agentprovider.EventStopFailure:
-		if r, ok := a.takeTaskResult(taskResult{result: ev.Error}); ok {
-			a.taskCh <- r
+func (a *Agentd) stopStatusLoop() {
+	a.statusStopOnce.Do(func() { close(a.statusStop) })
+	a.statusWG.Wait()
+}
+
+func (a *Agentd) statusLoop() {
+	for {
+		select {
+		case report := <-a.statusCh:
+			a.sendStatus(report)
+		case <-a.statusStop:
+			for {
+				select {
+				case report := <-a.statusCh:
+					a.sendStatus(report)
+				default:
+					return
+				}
+			}
 		}
 	}
 }
 
-// takeTaskResult claims the task slot, reporting false when no task is waiting.
-func (a *Agentd) takeTaskResult(r taskResult) (taskResult, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.hasTask {
-		return taskResult{}, false
-	}
-	a.hasTask = false
-	return r, true
-}
-
-// reportStatus calls ReportStatus with a deadline so a hung Core cannot block
-// hookLoop.
-func (a *Agentd) reportStatus(status string) {
+func (a *Agentd) sendStatus(report statusReport) {
+	defer func() {
+		if report.done != nil {
+			close(report.done)
+		}
+	}()
 	if a.client == nil {
 		return
 	}
@@ -332,8 +369,30 @@ func (a *Agentd) reportStatus(status string) {
 	defer cancel()
 	if _, err := a.client.ReportStatus(ctx, &api.StatusRequest{
 		Id:     a.opts.ID,
-		Status: status,
+		Status: report.status,
+		Reason: report.reason,
 	}); err != nil {
-		slog.Warn("agentd: report status", "id", a.opts.ID, "status", status, "err", err)
+		slog.Warn("agentd: report status", "id", a.opts.ID, "status", report.status, "err", err)
+	}
+}
+
+// reportStatus delivers lifecycle updates off the session actor. A startup
+// failure waits briefly so Core can return its reason; started and exited are
+// best effort because the final agent cleanup must stay inside Core's budget.
+func (a *Agentd) reportStatus(status, reason string) {
+	report := statusReport{status: status, reason: reason}
+	if status == api.StatusFailed {
+		report.done = make(chan struct{})
+	}
+	select {
+	case a.statusCh <- report:
+	case <-a.statusStop:
+		return
+	}
+	if report.done != nil {
+		select {
+		case <-report.done:
+		case <-time.After(3 * time.Second):
+		}
 	}
 }

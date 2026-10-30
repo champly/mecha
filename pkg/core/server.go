@@ -68,6 +68,9 @@ func (s *grpcService) ReportStatus(ctx context.Context, req *api.StatusRequest) 
 	case api.StatusExited:
 		inst.markExited()
 		s.core.logger.Info("agent exited", "role", inst.role, "id", inst.id)
+	case api.StatusFailed:
+		inst.markFailed(req.Reason)
+		s.core.logger.Error("agent failed to start", "role", inst.role, "id", inst.id, "reason", req.Reason)
 	}
 	return &emptypb.Empty{}, nil
 }

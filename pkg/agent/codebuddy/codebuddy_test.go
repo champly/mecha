@@ -41,6 +41,7 @@ func testNew(workspace, roleDir, prompt string) *CodeBuddy {
 }
 
 var _ agentprovider.Agent = (*CodeBuddy)(nil)
+var _ agentprovider.TUIAgent = (*CodeBuddy)(nil)
 
 func TestNew(t *testing.T) {
 	c := testNew("/ws", "/ws/.mecha/roles/lead", "test prompt")
@@ -53,6 +54,17 @@ func TestNew(t *testing.T) {
 	}
 	if c.Prompt != "test prompt" {
 		t.Errorf("prompt = %q, want %q", c.Prompt, "test prompt")
+	}
+}
+
+func TestTUIClassifyTrustPrompt(t *testing.T) {
+	c := testNew("/ws", "/ws/.mecha/roles/lead", "prompt")
+	got := c.TUI().Classify(agentprovider.ScreenSnapshot{Rows: []string{
+		"Do you trust the files in this folder?",
+		"> 1. Trust folder only",
+	}})
+	if got.State != agentprovider.InputBlocked {
+		t.Fatalf("state = %s, want blocked", got.State)
 	}
 }
 
@@ -113,7 +125,13 @@ func TestWriteSettings(t *testing.T) {
 			t.Errorf("hook %q command = %q, want shell string with mecha webhook", name, cmd)
 		}
 	}
-	for _, event := range []string{agentprovider.EventSessionStart, agentprovider.EventStop, agentprovider.EventStopFailure} {
+	for _, event := range []string{
+		agentprovider.EventSessionStart,
+		agentprovider.EventPromptSubmit,
+		agentprovider.EventStop,
+		agentprovider.EventStopFailure,
+		"Notification",
+	} {
 		if !strings.Contains(string(data), event) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}
@@ -175,6 +193,16 @@ func TestParseHookEvent(t *testing.T) {
 		}
 		if ev.SessionID != "abc123" {
 			t.Errorf("session_id = %q, want %q", ev.SessionID, "abc123")
+		}
+	})
+
+	t.Run("UserPromptSubmit generation id", func(t *testing.T) {
+		ev, err := c.ParseHookEvent([]byte(`{"hook_event_name":"UserPromptSubmit","session_id":"s1","generation_id":"gen-1","prompt":"do work"}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if ev.Event != agentprovider.EventPromptSubmit || ev.TurnID != "gen-1" || ev.Prompt != "do work" {
+			t.Errorf("event = %+v", ev)
 		}
 	})
 

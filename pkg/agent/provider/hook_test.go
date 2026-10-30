@@ -33,6 +33,25 @@ func TestParseHook(t *testing.T) {
 		}
 	})
 
+	t.Run("extracts shared turn prompt and source fields", func(t *testing.T) {
+		e, err := ParseHook("codex", []byte(`{
+			"hook_event_name":"Stop",
+			"session_id":"s1",
+			"turn_id":"turn-1",
+			"prompt":"do work",
+			"source":"clear",
+			"notification_type":"permission_prompt",
+			"message":"approve"
+		}`), eventMap, nil)
+		if err != nil {
+			t.Fatalf("ParseHook: %v", err)
+		}
+		if e.TurnID != "turn-1" || e.Prompt != "do work" || e.Source != "clear" ||
+			e.NotificationType != "permission_prompt" || e.Message != "approve" {
+			t.Errorf("shared fields = %+v", e)
+		}
+	})
+
 	t.Run("invalid JSON", func(t *testing.T) {
 		_, err := ParseHook("claude", []byte(`{not json`), eventMap, nil)
 		if err == nil || !strings.Contains(err.Error(), "claude: parse hook event") {
