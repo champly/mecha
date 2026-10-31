@@ -87,6 +87,31 @@ func TestScreenParserTracksProviderStateOSC(t *testing.T) {
 	}
 }
 
+func TestScreenParserRepliesLightTerminalColors(t *testing.T) {
+	p := newScreenParser(5, 30)
+	if err := p.Write([]byte("\x1b]11;?\x07\x1b]10;?\x07")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	var replies strings.Builder
+	timeout := time.After(time.Second)
+	for {
+		got := replies.String()
+		if strings.Contains(got, "]11;rgb:ffff/ffff/ffff") && strings.Contains(got, "]10;rgb:0000/0000/0000") {
+			return
+		}
+		select {
+		case chunk, ok := <-p.Responses():
+			if !ok {
+				t.Fatalf("responses channel closed with replies %q", got)
+			}
+			replies.Write(chunk)
+		case <-timeout:
+			t.Fatalf("terminal color replies = %q, want light theme defaults", got)
+		}
+	}
+}
+
 func TestScreenParserDrainsTerminalQueries(t *testing.T) {
 	p := newScreenParser(5, 30)
 

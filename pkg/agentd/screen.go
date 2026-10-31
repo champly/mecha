@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"hash/fnv"
+	"image/color"
 	"strings"
 	"sync"
 
@@ -38,8 +39,12 @@ func newScreenParser(rows, cols int) *vtScreenParser {
 	if cols <= 0 {
 		cols = 80
 	}
+	emu := vt.NewEmulator(cols, rows)
+	emu.SetDefaultForegroundColor(color.Black)
+	emu.SetDefaultBackgroundColor(color.White)
+	emu.SetDefaultCursorColor(color.Black)
 	p := &vtScreenParser{
-		emu:       vt.NewEmulator(cols, rows),
+		emu:       emu,
 		responses: make(chan []byte, 16),
 	}
 	go p.drainResponses()
