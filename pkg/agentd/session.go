@@ -556,6 +556,16 @@ func (s *sessionActor) handleTimer(kind sessionTimerKind) {
 			if s.blockedReason != "" {
 				reason = "startup blocked: " + s.blockedReason
 			}
+			s.host.logger.Error("agentd: boot timeout screen",
+				"state", s.class.State.String(),
+				"classify_reason", s.class.Reason,
+				"raw", s.raw,
+				"dirty", s.dirty,
+				"cursor_x", s.snapshot.CursorX,
+				"cursor_y", s.snapshot.CursorY,
+				"alternate", s.snapshot.Alternate,
+				"screen", strings.Join(s.snapshot.Rows, "\n"),
+			)
 			s.startupFailed(reason)
 		}
 	case timerSettle:
@@ -679,7 +689,8 @@ func (s *sessionActor) maybeDispatch() {
 	if s.queued == nil || (s.phase != phaseIdle && s.phase != phaseBooting) {
 		return
 	}
-	if !s.started || !s.raw || s.class.State != agentprovider.InputEmpty || s.userDirty() {
+	if !s.started || !s.raw ||
+		(s.class.State != agentprovider.InputEmpty && s.class.State != agentprovider.InputDraft) {
 		return
 	}
 	s.current = s.queued

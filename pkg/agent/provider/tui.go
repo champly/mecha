@@ -84,7 +84,7 @@ type CommonTUI struct {
 // It only inspects the bottom portion of the screen, where all supported TUIs
 // render their editor and status line.
 func (c CommonTUI) Classify(s ScreenSnapshot) Classification {
-	rows := bottomRows(s.Rows, 14)
+	rows := bottomRows(trimTrailingBlankRows(s.Rows), 14)
 	text := strings.Join(rows, "\n")
 	lower := strings.ToLower(text)
 
@@ -139,6 +139,17 @@ func InputLineValue(row string, anchors []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// trimTrailingBlankRows drops empty rows below the rendered content. The
+// virtual screen can be taller than the TUI draws, which would otherwise push
+// the prompt out of the bottom window.
+func trimTrailingBlankRows(rows []string) []string {
+	end := len(rows)
+	for end > 0 && strings.TrimSpace(rows[end-1]) == "" {
+		end--
+	}
+	return rows[:end]
 }
 
 func bottomRows(rows []string, n int) []string {

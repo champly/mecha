@@ -191,11 +191,12 @@ func TestSessionSettleRechecksRawMode(t *testing.T) {
 	}
 }
 
-func TestSessionQueuesTaskWhileUserIsActive(t *testing.T) {
+func TestSessionSubmitsOverDraft(t *testing.T) {
 	s, host := newSessionTestHost(t, true)
 	s.handleScreen(snapshot(1, "EMPTY"))
 	s.handleTimer(timerSettle)
 	host.userActive = true
+	s.handleScreen(snapshot(2, "DRAFT"))
 
 	p := &pendingTask{
 		request:  &api.TaskRequest{Id: "t1", Task: "do work"},
@@ -203,18 +204,14 @@ func TestSessionQueuesTaskWhileUserIsActive(t *testing.T) {
 		prompt:   "do work",
 	}
 	s.handleTask(p)
-	requireNoCommand(t, host.commands)
-
-	host.userActive = false
-	s.handleScreen(snapshot(2, "EMPTY"))
 	requireCommand(t, host.commands, inputTaskText)
 }
 
 func TestSessionQueueTimeoutFailsWithReason(t *testing.T) {
-	s, host := newSessionTestHost(t, true)
+	s, _ := newSessionTestHost(t, true)
 	s.handleScreen(snapshot(1, "EMPTY"))
 	s.handleTimer(timerSettle)
-	host.userActive = true
+	s.handleScreen(snapshot(2, "BUSY"))
 
 	p := &pendingTask{
 		request:  &api.TaskRequest{Id: "t1", Task: "do work"},
