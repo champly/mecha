@@ -36,6 +36,9 @@ func newAskCmd() *cobra.Command {
 			}
 
 			if !resp.GetSuccess() {
+				if resp.GetCode() != "" {
+					return fmt.Errorf("ask: %s: %s", resp.GetCode(), resp.GetResult())
+				}
 				return fmt.Errorf("ask: %s", resp.GetResult())
 			}
 

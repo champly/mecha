@@ -42,6 +42,7 @@ message AskResponse {
   string id = 1;
   bool success = 2;
   string result = 3;
+  string code = 4;
 }
 
 message TaskRequest {
@@ -53,6 +54,7 @@ message TaskResult {
   string id = 1;
   bool success = 2;
   string result = 3;
+  string code = 4;
 }
 
 service Core {

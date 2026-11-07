@@ -57,6 +57,7 @@ type Classification struct {
 
 // TUIProfile declares the PTY interaction capabilities of one agent.
 type TUIProfile struct {
+	// Informational only; ScreenSnapshot.BracketedPaste controls injection.
 	PasteMode PasteMode
 	SubmitKey []byte
 	// Classify returns InputUnknown when the visible screen is not recognized.

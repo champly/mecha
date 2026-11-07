@@ -207,6 +207,26 @@ func TestSessionSubmitsOverDraft(t *testing.T) {
 	requireCommand(t, host.commands, inputTaskText)
 }
 
+func TestSessionUsesLiveBracketedPasteMode(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	ready := snapshot(1, "EMPTY")
+	ready.BracketedPaste = true
+	s.handleScreen(ready)
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "do\nwork"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   agentprovider.NormalizePrompt("do\nwork"),
+	}
+	s.handleTask(p)
+	command := requireCommand(t, host.commands, inputTaskText)
+	want := bracketedPasteStart + "do\nwork" + bracketedPasteEnd
+	if got := string(command.data); got != want {
+		t.Fatalf("task input = %q, want %q", got, want)
+	}
+}
+
 func TestSessionQueueTimeoutFailsWithReason(t *testing.T) {
 	s, _ := newSessionTestHost(t, true)
 	s.handleScreen(snapshot(1, "EMPTY"))
@@ -390,6 +410,66 @@ func TestBlockedScreenFailsRunningCoreTurn(t *testing.T) {
 	s.handleScreen(snapshot(2, "BLOCKED"))
 	result := requireResult(t, p.resultCh)
 	if !strings.Contains(result.result, "interaction required") {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.code != api.TaskErrorInteractionRequired {
+		t.Fatalf("result code = %q, want %q", result.code, api.TaskErrorInteractionRequired)
+	}
+	if s.phase != phaseInteractionRequired {
+		t.Fatalf("phase = %s, want interaction-required", s.phase)
+	}
+}
+
+func TestBlockedScreenFailsQueuedTaskWithoutDispatching(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+	s.handleScreen(snapshot(2, "BLOCKED"))
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "do work"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   "do work",
+	}
+	s.handleTask(p)
+	result := requireResult(t, p.resultCh)
+	if result.code != api.TaskErrorInteractionRequired {
+		t.Fatalf("result code = %q, want %q", result.code, api.TaskErrorInteractionRequired)
+	}
+	if !strings.Contains(result.result, "interaction required") {
+		t.Fatalf("result = %+v", result)
+	}
+	requireNoCommand(t, host.commands)
+
+	s.handleScreen(snapshot(3, "EMPTY"))
+	if s.phase != phaseIdle {
+		t.Fatalf("phase after interaction cleared = %s, want idle", s.phase)
+	}
+}
+
+func TestPermissionNotificationFailsRunningTaskWithCode(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "do work"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   "do work",
+	}
+	s.handleTask(p)
+	requireCommand(t, host.commands, inputTaskText)
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:            agentprovider.EventInteraction,
+		NotificationType: "permission_prompt",
+		Message:          "write access requested",
+	})
+	result := requireResult(t, p.resultCh)
+	if result.code != api.TaskErrorInteractionRequired {
+		t.Fatalf("result code = %q, want %q", result.code, api.TaskErrorInteractionRequired)
+	}
+	if !strings.Contains(result.result, "write access requested") {
 		t.Fatalf("result = %+v", result)
 	}
 	if s.phase != phaseInteractionRequired {

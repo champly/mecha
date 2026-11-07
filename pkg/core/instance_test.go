@@ -41,7 +41,12 @@ func TestExecuteDiscardsStaleResult(t *testing.T) {
 
 	go func() {
 		req := <-stream.sent
-		inst.deliverResult(&api.AskResponse{Id: req.Id, Success: true, Result: "fresh"})
+		inst.deliverResult(&api.AskResponse{
+			Id:      req.Id,
+			Success: false,
+			Result:  "fresh",
+			Code:    api.TaskErrorInteractionRequired,
+		})
 	}()
 
 	resp, err := inst.execute(context.Background(), "do it")
@@ -50,6 +55,9 @@ func TestExecuteDiscardsStaleResult(t *testing.T) {
 	}
 	if resp.GetResult() != "fresh" {
 		t.Errorf("execute returned %q, want the fresh result", resp.GetResult())
+	}
+	if resp.GetCode() != api.TaskErrorInteractionRequired {
+		t.Errorf("execute code = %q, want %q", resp.GetCode(), api.TaskErrorInteractionRequired)
 	}
 }
 

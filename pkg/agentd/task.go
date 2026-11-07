@@ -14,6 +14,7 @@ import (
 type taskResult struct {
 	success bool
 	result  string
+	code    string
 }
 
 // connectTaskChannel opens the TaskChannel stream and starts the task loop.
@@ -85,7 +86,12 @@ func (a *Agentd) handleTask(stream grpc.BidiStreamingClient[api.TaskResult, api.
 
 	select {
 	case r := <-resultCh:
-		_ = stream.Send(&api.TaskResult{Id: req.Id, Success: r.success, Result: r.result})
+		_ = stream.Send(&api.TaskResult{
+			Id:      req.Id,
+			Success: r.success,
+			Result:  r.result,
+			Code:    r.code,
+		})
 	case <-a.stop:
 		_ = stream.Send(&api.TaskResult{Id: req.Id, Result: "agent exited during task"})
 	case <-time.After(api.TaskTimeout):

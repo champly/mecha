@@ -112,6 +112,7 @@ func (s *grpcService) TaskChannel(stream grpc.BidiStreamingServer[api.TaskResult
 			Id:      result.Id,
 			Success: result.Success,
 			Result:  result.Result,
+			Code:    result.Code,
 		})
 	}
 }

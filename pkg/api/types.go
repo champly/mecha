@@ -36,6 +36,8 @@ const (
 	StatusExited  = "exited"
 	StatusFailed  = "failed"
 
+	TaskErrorInteractionRequired = "interaction_required"
+
 	// TaskTimeout bounds one task on both sides of the stream, so a stuck agent
 	// cannot wedge the role forever.
 	TaskTimeout = 30 * time.Minute

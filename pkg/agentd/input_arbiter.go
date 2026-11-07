@@ -75,10 +75,10 @@ func (a *inputArbiter) system(data []byte) bool {
 	return a.send(inputCommand{action: inputSystem, data: append([]byte(nil), data...)})
 }
 
-func (a *inputArbiter) taskText(profile agentprovider.TUIProfile, text string) bool {
+func (a *inputArbiter) taskText(text string, bracketedPaste bool) bool {
 	return a.send(inputCommand{
 		action: inputTaskText,
-		data:   encodeTaskInput(profile, text),
+		data:   encodeTaskInput(text, bracketedPaste),
 	})
 }
 
@@ -190,9 +190,9 @@ func (a *inputArbiter) emit(ev inputEvent) {
 	}
 }
 
-func encodeTaskInput(profile agentprovider.TUIProfile, task string) []byte {
+func encodeTaskInput(task string, bracketedPaste bool) []byte {
 	text := agentprovider.NormalizePrompt(task)
-	if profile.PasteMode != agentprovider.PasteBracketed {
+	if !bracketedPaste {
 		text = singleLineTask(text)
 		return []byte(text)
 	}

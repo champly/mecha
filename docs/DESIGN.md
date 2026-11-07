@@ -291,7 +291,7 @@ handleTask（串行）:
 
 **就绪判定**：PTY 输出经 `charmbracelet/x/vt` 转成不可变屏幕快照，provider profile 分类为 `InputEmpty/InputDraft/InputBusy/InputBlocked/InputUnknown`。只有 `termios raw + InputEmpty + 可见内容 hash 300ms 不变` 才上报 started；光标闪烁、颜色或纯样式刷新不会重置 settle。静默窗口只用于去抖，不是就绪证明；未知状态和未知弹窗 fail closed，30s 后带原因上报 failed。Codex 额外解析 `OSC 7501;state=idle|working:app=codex` 作为首选状态信号，文本锚点只作兜底。
 
-**输入仲裁**：stdin 用户字节、任务文本和 Enter 全部经过 `inputArbiter`。任务事务期间用户输入进入有界缓冲，事务结束后再写入 PTY；用户按键会立即设置 dirty，只有后续屏幕重新确认 Empty 才解除。PTY 直接写路径已删除。虚拟终端的 DSR/DA/CPR 查询回复由 parser 内部 pipe 异步排空并通过同一 arbiter 回写，避免 Emulator.Write 被无消费者回复阻塞；外层终端产生的重复自动回复会被过滤，焦点/设备查询回复不会把 pane 误标为用户占用。
+**输入仲裁**：stdin 用户字节、任务文本和 Enter 全部经过 `inputArbiter`。任务文本是否使用 bracketed paste 以当前 `ScreenSnapshot.BracketedPaste` 为准，不依赖 provider 的静态配置。任务事务期间用户输入进入有界缓冲，事务结束后再写入 PTY；用户按键会立即设置 dirty，只有后续屏幕重新确认 Empty 才解除。PTY 直接写路径已删除。虚拟终端的 DSR/DA/CPR 查询回复由 parser 内部 pipe 异步排空并通过同一 arbiter 回写，避免 Emulator.Write 被无消费者回复阻塞；外层终端产生的重复自动回复会被过滤，焦点/设备查询回复不会把 pane 误标为用户占用。
 
 **Hook 与归属**：session actor 统一处理 provider hook。
 
@@ -309,6 +309,8 @@ handleTask（串行）:
 
 状态上报和任务结果投递不阻塞 session actor。`ReportStatus(failed, reason)` 由独立 delivery worker 发送，失败原因会经 Core `waitReady` 返回给调用方。
 
+如果 agent 已经处于 `InputBlocked`，新任务不会进入 10 分钟队列，而是立即返回 `interaction_required`；用户处理权限、登录或信任界面后，session 恢复 Idle 并重新接受任务。
+
 **session 关键转换：**
 
 | 当前状态 | 事件 | 结果 |
@@ -321,7 +323,7 @@ handleTask（串行）:
 | Submitting | 不同 prompt / Interrupt | pending 失败 |
 | Submitting | 仍 Draft | 最多 3 次 Enter |
 | Running(Core) | 匹配 Stop / StopFailure / Interrupt | 交付结果或失败 |
-| Running(Core) | Blocked / `SessionStart(clear)` | 失败当前任务 |
+| Running(Core) | Blocked / `SessionStart(clear)` | 失败当前任务；Blocked 返回 `interaction_required` |
 | Running(User) | Stop / StopFailure / Interrupt | Idle，结果不交 Core |
 | InteractionRequired | Blocked 解除 + Empty | Idle |
 | 任意 | agent 退出 | 失败所有 pending |
@@ -466,9 +468,9 @@ message AgentConfig {
 }
 message StatusRequest { string id = 1; string status = 2; string reason = 3; }
 message AskRequest    { string role = 1; string task = 2; }
-message AskResponse   { string id = 1; bool success = 2; string result = 3; }
+message AskResponse   { string id = 1; bool success = 2; string result = 3; string code = 4; }
 message TaskRequest   { string id = 1; string task = 2; }
-message TaskResult    { string id = 1; bool success = 2; string result = 3; }
+message TaskResult    { string id = 1; bool success = 2; string result = 3; string code = 4; }
 ```
 
 **实现细节：**

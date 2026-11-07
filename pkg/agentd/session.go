@@ -319,6 +319,13 @@ func (s *sessionActor) handleTask(p *pendingTask) {
 		s.deliver(p, taskResult{result: "agent is not running"})
 		return
 	}
+	if s.phase == phaseInteractionRequired || s.class.State == agentprovider.InputBlocked {
+		s.deliver(p, taskResult{
+			result: interactionRequiredMessage(reasonOr(s.blockedReason, s.class.Reason)),
+			code:   api.TaskErrorInteractionRequired,
+		})
+		return
+	}
 	if s.queued != nil {
 		// taskLoop is serial, so this is only possible during shutdown races.
 		s.deliver(p, taskResult{result: "agent is already handling a queued task"})
@@ -702,7 +709,7 @@ func (s *sessionActor) maybeDispatch() {
 	s.enterSent = false
 	s.enterAttempts = 0
 	s.renderBase = s.snapshot.Version
-	if !s.host.input.taskText(s.host.profile, s.current.request.Task) {
+	if !s.host.input.taskText(s.current.request.Task, s.snapshot.BracketedPaste) {
 		s.failCurrent("input arbiter is unavailable")
 		return
 	}
@@ -780,14 +787,14 @@ func (s *sessionActor) completeCurrent(result taskResult) {
 }
 
 func (s *sessionActor) failCurrent(reason string) {
-	s.failCurrentInput(reason, false)
+	s.failCurrentInput(reason, false, "")
 }
 
 func (s *sessionActor) failCurrentWithAbort(reason string) {
-	s.failCurrentInput(reason, true)
+	s.failCurrentInput(reason, true, "")
 }
 
-func (s *sessionActor) failCurrentInput(reason string, abort bool) {
+func (s *sessionActor) failCurrentInput(reason string, abort bool, code string) {
 	if s.current == nil {
 		return
 	}
@@ -800,7 +807,7 @@ func (s *sessionActor) failCurrentInput(reason string, abort bool) {
 	s.resetSubmission()
 	s.cancelTimer(timerInterrupt)
 	s.sawBusy = false
-	s.deliver(p, taskResult{result: reason})
+	s.deliver(p, taskResult{result: reason, code: code})
 	s.host.input.endTask(abort)
 	s.maybeDispatch()
 }
@@ -816,17 +823,28 @@ func (s *sessionActor) resetSubmission() {
 func (s *sessionActor) enterBlocked(reason string) {
 	s.blockedReason = reason
 	switch s.phase {
-	case phaseBooting:
+	case phaseBooting, phaseIdle:
 		s.cancelTimer(timerSettle)
-	case phaseIdle:
-		s.cancelTimer(timerSettle)
+		s.phase = phaseInteractionRequired
 	case phaseSubmitting, phaseRunning:
 		if s.owner == ownerCore && s.current != nil {
 			s.phase = phaseInteractionRequired
-			s.failCurrent("interaction required: " + reason)
+			s.failCurrentInput(
+				interactionRequiredMessage(reason),
+				false,
+				api.TaskErrorInteractionRequired,
+			)
 		} else {
 			s.phase = phaseInteractionRequired
 		}
+	}
+	if s.queued != nil {
+		s.cancelTimer(timerQueue)
+		s.deliver(s.queued, taskResult{
+			result: interactionRequiredMessage(reason),
+			code:   api.TaskErrorInteractionRequired,
+		})
+		s.queued = nil
 	}
 }
 
@@ -916,6 +934,10 @@ func interactionNotification(ev agentprovider.HookEvent) bool {
 		strings.Contains(typ, "permission") ||
 		strings.Contains(typ, "elicitation") ||
 		(typ == "auth_required" || typ == "login_required")
+}
+
+func interactionRequiredMessage(reason string) string {
+	return "interaction required: " + reasonOr(reason, "agent requires user interaction")
 }
 
 func reasonOr(reason, fallback string) string {

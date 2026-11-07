@@ -27,7 +27,7 @@ func TestInputArbiterSerializesTaskAndUserInput(t *testing.T) {
 	t.Cleanup(func() { close(stop) })
 
 	profile := agentprovider.TUIProfile{PasteMode: agentprovider.PasteBracketed, SubmitKey: []byte("\r")}
-	if !a.taskText(profile, "task") {
+	if !a.taskText("task", true) {
 		t.Fatal("taskText was rejected")
 	}
 	if !a.user([]byte("U")) {
@@ -90,8 +90,8 @@ func TestInputArbiterBuffersUserInputWithBound(t *testing.T) {
 	}
 }
 
-func TestEncodeTaskInputUsesProviderCapabilities(t *testing.T) {
-	got := string(encodeTaskInput(agentprovider.TUIProfile{PasteMode: agentprovider.PasteBracketed}, "a\nb"+bracketedPasteEnd+"c"))
+func TestEncodeTaskInputUsesLiveBracketedPasteMode(t *testing.T) {
+	got := string(encodeTaskInput("a\nb"+bracketedPasteEnd+"c", true))
 	if !strings.HasPrefix(got, bracketedPasteStart) {
 		t.Fatalf("bracketed payload missing start marker: %q", got)
 	}
@@ -99,7 +99,7 @@ func TestEncodeTaskInputUsesProviderCapabilities(t *testing.T) {
 		t.Fatalf("payload contains an unprotected paste end marker: %q", got)
 	}
 
-	got = string(encodeTaskInput(agentprovider.TUIProfile{PasteMode: agentprovider.PasteLiteral}, "a\nb"))
+	got = string(encodeTaskInput("a\nb", false))
 	if got != "a b" {
 		t.Fatalf("literal payload = %q, want one line", got)
 	}
