@@ -21,7 +21,7 @@
 | role | agent 的职责定义（name + prompt + agent 配置） |
 | profile | 一组 role 集合，启动时由 `profile` 字段选择 |
 | id | agentd 实例 ID（UUID），由 Core 拉起 agentd 时分配；gRPC 协议中的唯一标识 |
-| pane | 终端面板（tmux / iTerm2 / Ghostty），承载一个 specialist agentd |
+| pane | 终端面板（tmux / Rex / iTerm2 / Ghostty），承载一个 specialist agentd |
 
 ---
 
@@ -173,7 +173,7 @@ type Runtime struct {           // 非 yaml，启动期构造
 ```
 1. config.LoadConfig(configPath, agent.ValidateAgentType)
 2. core.New(workspace, cfg)
-   ├── term.New()                # 按 tmux → iTerm2 → Ghostty 顺序检测，全不匹配报 ErrUnsupported
+   ├── term.New()                # 按 tmux → Rex → iTerm2 → Ghostty 顺序检测，全不匹配报 ErrUnsupported
    ├── config.NewFileLogger()    # ~/.mecha/logs/<workspace>/<date>.log
    └── resolveMechaBinary()
 3. c.Start(ctx)（ctx 监听 SIGINT/SIGTERM）
@@ -620,38 +620,39 @@ type Handle interface {
 }
 ```
 
-**检测优先级（`term.New()`）**：tmux → iTerm2 → Ghostty，auto 取第一个 Match 且 anchor 可用的后端；显式 `Kind` 返回该后端的 anchor 错误；auto 跳过 anchor 不可用的后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
+**检测优先级（`term.New()`）**：tmux → Rex → iTerm2 → Ghostty，auto 取第一个 Match 且 anchor 可用的后端；显式 `Kind` 返回该后端的 anchor 错误；auto 跳过 anchor 不可用的后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
 
 | 后端 | Match 条件 | 平台 |
 |---|---|---|
 | tmux | `TMUX` 环境变量非空 **且** `tmux` binary 存在 | macOS / Linux |
+| Rex | `REX_SERVER`、`REX_SESSION`、`REX_BLOCK` 均非空 **且** `rex` binary 存在 | macOS |
 | iTerm2 | `TERM_PROGRAM`（小写）包含 `iterm` | macOS |
 | Ghostty | `TERM_PROGRAM`（小写）包含 `ghostty` | macOS |
 
-**Anchor 机制**：三个后端都钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 在 `New()` 用 `ps`/`tty` 同步捕获进程的控制终端 tty，并在首次 Spawn 时通过 AppleScript 终端列表按 tty 懒解析出唯一 terminal id），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。anchor 不可用时三个后端一律 fail closed：返回明确错误且不创建 pane，绝不回退到 active/current focus。`New()` 阶段 anchor 不可用（`TMUX_PANE`/`ITERM_SESSION_ID` 为空、Ghostty 取不到控制 tty）会包装 `driver.ErrAnchorUnavailable`：显式 `Kind` 返回该 anchor 错误、绝不回退；auto 跳过该后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
+**Anchor 机制**：四个后端都钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，Rex 用 `REX_SERVER` / `REX_SESSION` / `REX_BLOCK`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 在 `New()` 用 `ps`/`tty` 同步捕获进程的控制终端 tty，并在首次 Spawn 时通过 AppleScript 终端列表按 tty 懒解析出唯一 terminal id），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。anchor 不可用时四个后端一律 fail closed：返回明确错误且不创建 pane，绝不回退到 active/current focus。`New()` 阶段 anchor 不可用（`TMUX_PANE`/Rex 环境变量/`ITERM_SESSION_ID` 为空、Ghostty 取不到控制 tty）会包装 `driver.ErrAnchorUnavailable`：显式 `Kind` 返回该 anchor 错误、绝不回退；auto 跳过该后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
 
 **driver.Chain**：`[]string` 栈，按分割顺序记录已 spawn pane 的原生 ID；后续分割以 `Last()` 为目标；Kill 时无论成败都 Remove（防 stale ID 成为后续分割目标）。
 
 **BuildCommand**：每个 arg 过 `shellquote.Quote` 后空格连接，不再注入 `cd &&`。agentd 自己接收 `--dir <workspace>` 并 chdir，spawn 命令保持为单条可执行命令。
 
-**Pane 标题**：agentd 在 Register 后向自身 stdout 写 OSC 0 标题 `\x1b]0;<role>\x07`。tmux/iTerm2/Ghostty 等终端识别时显示角色名；`--log-stdout`/headless 或 stdout 非 TTY 时跳过，不会把转义写进日志。原 `Backend.Label` 接口已删除。
+**Pane 标题**：agentd 在 Register 后向自身 stdout 写 OSC 0 标题 `\x1b]0;<role>\x07`。tmux/Rex/iTerm2/Ghostty 等终端识别时显示角色名；`--log-stdout`/headless 或 stdout 非 TTY 时跳过，不会把转义写进日志。原 `Backend.Label` 接口已删除。
 
 ### 8.2 后端实现对照
 
-| | tmux | iTerm2 | Ghostty |
-|---|---|---|---|
-| 通信方式 | tmux CLI | WebSocket（protobuf over unix socket） | AppleScript（`osascript -e`，无持久连接） |
-| 连接时机 | 每次调用起进程 | 首次 Spawn 时 dial；出错置 dead，下次 Spawn/Kill 自动重拨 | 每次调用起 osascript（`New()` 只捕获 tty） |
-| 认证 | 无 | osascript 取 cookie/key（10s 超时），header 携带 | macOS Automation 权限 |
-| 首个分割 | `split-window -h -p 50`（右侧） | SplitPaneRequest **VERTICAL**（右侧） | 按控制 tty 懒解析唯一 anchor id，再 `split <anchor> direction right` |
-| 后续分割 | `split-window -v -p 50`（下方，目标 chain.Last） | **HORIZONTAL**（下方，无比例参数） | `split <last> direction down` |
-| 新 pane ID | `-P -F #{pane_id}` 返回 | SplitPane 响应 | `split` 命令直接返回新 terminal（无计数竞态） |
-| 引导发送 | `split-window <cmd>` 直接执行，无 shell 回显/history | 先 `GetBuffer` 等 shell 打印提示符，再 `SendTextRequest` | `input text` + `send key "enter"`（AppleScript 无 buffer 读取） |
-| WorkDir | `-c <dir>` + agentd `--dir` | agentd `--dir` | agentd `--dir` |
-| 引导失败回滚 | kill-pane | closeOrphan（连接死了先重拨再 close session） | — |
-| Kill | `kill-pane` | `CloseRequest`；**chain 空时主动断开 WebSocket** | AppleScript `close` |
-| Pane 标题 | agentd OSC 0 | agentd OSC 0 | agentd OSC 0 |
-| Close | no-op | 关 WebSocket | no-op |
+| | tmux | Rex | iTerm2 | Ghostty |
+|---|---|---|---|---|
+| 通信方式 | tmux CLI | rex CLI | WebSocket（protobuf over unix socket） | AppleScript（`osascript -e`，无持久连接） |
+| 连接时机 | 每次调用起进程 | 每次调用起进程 | 首次 Spawn 时 dial；出错置 dead，下次 Spawn/Kill 自动重拨 | 每次调用起 osascript（`New()` 只捕获 tty） |
+| 认证 | 无 | Rex server 地址来自 `REX_SERVER` | osascript 取 cookie/key（10s 超时），header 携带 | macOS Automation 权限 |
+| 首个分割 | `split-window -h -p 50`（右侧） | `rex split -b <REX_BLOCK> --split=right`（右侧） | SplitPaneRequest **VERTICAL**（右侧） | 按控制 tty 懒解析唯一 anchor id，再 `split <anchor> direction right` |
+| 后续分割 | `split-window -v -p 50`（下方，目标 chain.Last） | `rex split -b <chain.Last> --split=below`（下方） | **HORIZONTAL**（下方，无比例参数） | `split <last> direction down` |
+| 新 pane ID | `-P -F #{pane_id}` 返回 | `--json` 的 `.block_ids[0]` | SplitPane 响应 | `split` 命令直接返回新 terminal（无计数竞态） |
+| 引导发送 | `split-window <cmd>` 直接执行，无 shell 回显/history | `--shell=none -- <cmd...>` 直接执行 | 先 `GetBuffer` 等 shell 打印提示符，再 `SendTextRequest` | `input text` + `send key "enter"`（AppleScript 无 buffer 读取） |
+| WorkDir | `-c <dir>` + agentd `--dir` | `--cwd <dir>` | agentd `--dir` | agentd `--dir` |
+| 引导失败回滚 | kill-pane | — | closeOrphan（连接死了先重拨再 close session） | — |
+| Kill | `kill-pane` | `rex block close` | `CloseRequest`；**chain 空时主动断开 WebSocket** | AppleScript `close` |
+| Pane 标题 | agentd OSC 0 | agentd OSC 0 | agentd OSC 0 | agentd OSC 0 |
+| Close | no-op | no-op | 关 WebSocket | no-op |
 
 iTerm2 协议细节：自增 seq 作请求 id，写超时 10s、读超时 30s，跳过 id=0 的通知帧，id 不匹配或解码失败即 fail（关连接置 dead）。socket 路径 `~/Library/Application Support/iTerm2/private/socket`，子协议 `api.iterm2.com`。
 

@@ -3,10 +3,12 @@ package term_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +103,22 @@ func paneCount(ctx context.Context) (int, error) {
 		}
 		return n, nil
 	}
+	if os.Getenv("REX_SERVER") != "" && os.Getenv("REX_SESSION") != "" {
+		out, err := exec.CommandContext(ctx,
+			"rex", "-S", os.Getenv("REX_SERVER"),
+			"block", "ls", "-s", os.Getenv("REX_SESSION"), "--json",
+		).CombinedOutput()
+		if err != nil {
+			return 0, fmt.Errorf("rex block ls: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		var result struct {
+			Blocks []json.RawMessage `json:"blocks"`
+		}
+		if err := json.Unmarshal(out, &result); err != nil {
+			return 0, fmt.Errorf("rex block ls: decode JSON: %w", err)
+		}
+		return len(result.Blocks), nil
+	}
 	var script string
 	if strings.Contains(strings.ToLower(os.Getenv("TERM_PROGRAM")), "ghostty") {
 		script = `tell application "Ghostty" to return count of terminals of selected tab of front window`
@@ -158,9 +176,31 @@ func TestNewHeadlessSelection(t *testing.T) {
 	}
 }
 
+func TestNewRexSelection(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REX_BIN_DIR", dir)
+	t.Setenv("REX_SERVER", "unix:///tmp/rex.sock")
+	t.Setenv("REX_SESSION", "session:work")
+	t.Setenv("REX_BLOCK", "block:coordinator")
+
+	backend, err := term.New(term.Options{Kind: "rex"})
+	if err != nil {
+		t.Fatalf("New(rex): %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestNewAutoUnchangedWithoutHeadless(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("REX_SERVER", "")
+	t.Setenv("REX_SESSION", "")
+	t.Setenv("REX_BLOCK", "")
 	if _, err := term.New(); !errors.Is(err, term.ErrUnsupported) {
 		t.Fatalf("New() = %v, want ErrUnsupported", err)
 	}

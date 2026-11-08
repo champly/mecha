@@ -11,6 +11,7 @@ import (
 	"github.com/champly/mecha/pkg/term/ghostty"
 	"github.com/champly/mecha/pkg/term/headless"
 	"github.com/champly/mecha/pkg/term/iterm2"
+	"github.com/champly/mecha/pkg/term/rex"
 	"github.com/champly/mecha/pkg/term/tmux"
 )
 
@@ -24,9 +25,11 @@ type (
 // Options selects a terminal backend.
 //
 // The zero value (or no Options at all) preserves the historical behaviour:
-// auto-detect tmux, iTerm2, or Ghostty and fail with ErrUnsupported otherwise.
+// auto-detect tmux, Rex, iTerm2, or Ghostty and fail with ErrUnsupported
+// otherwise.
 type Options struct {
-	// Kind is "auto" (default), "headless", "tmux", "iterm2", or "ghostty".
+	// Kind is "auto" (default), "headless", "tmux", "rex", "iterm2", or
+	// "ghostty".
 	Kind string
 	// AllowHeadless makes "auto" fall back to the headless backend when no
 	// interactive terminal is detected. It has no effect when Kind is set
@@ -51,6 +54,7 @@ var factories = []struct {
 	ctor  func() (Backend, error)
 }{
 	{"tmux", tmux.Match, tmux.New},
+	{"rex", rex.Match, rex.New},
 	{"iterm2", iterm2.Match, iterm2.New},
 	{"ghostty", ghostty.Match, ghostty.New},
 }

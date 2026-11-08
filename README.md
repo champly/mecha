@@ -2,13 +2,13 @@
 
 **Turn your terminal into a multi-agent dev team.** ([中文](README.zh-CN.md))
 
-You talk to a **Coordinator**; it decomposes your request and dispatches tasks to **Specialist** agents, each spawned on demand in its own tmux / iTerm2 / Ghostty pane, so you can watch every task execute live. Task state is driven by agent hook events (no polling), and the agents themselves are pluggable: Claude Code, Codex, Gemini, CodeBuddy, or Pi, mixed per role.
+You talk to a **Coordinator**; it decomposes your request and dispatches tasks to **Specialist** agents, each spawned on demand in its own tmux / Rex / iTerm2 / Ghostty pane, so you can watch every task execute live. Task state is driven by agent hook events (no polling), and the agents themselves are pluggable: Claude Code, Codex, Gemini, CodeBuddy, or Pi, mixed per role.
 
 ## Features
 
 - **Coordinator + Specialists**: only the Coordinator's prompt carries the dispatch instructions (`mecha ask` + the role list), and Core refuses to dispatch tasks *to* it; Specialists receive tasks but get no dispatch capability.
 - **Roles you define**: teams are declared as profiles in `~/.mecha/config.yaml` — role name, prompt, and agent per role. The default `softwarecompany` profile (lead + architect / coder / tester / reviewer) is just one example team.
-- **Live panes**: each Specialist runs in its own tmux / iTerm2 / Ghostty pane.
+- **Live panes**: each Specialist runs in its own tmux / Rex / iTerm2 / Ghostty pane.
 - **Pluggable agents**: Claude Code, Codex, Gemini, CodeBuddy, Pi — mix different agents per role.
 - **Hook-driven task state**: provider lifecycle hooks report task completion, while Core also detects process exits and timeouts, with no polling.
 - **Single binary**: Core, agentd, and CLI are one `mecha` binary; no external services.
@@ -42,6 +42,7 @@ Hook events: agent ──► mecha webhook ──► agentd local HTTP
 - One of the supported agent CLIs installed and authenticated: `claude`, `codex`, `gemini`, `codebuddy`, or `pi`.
 - A supported terminal multiplexer/emulator (auto-detected, in priority order):
   - **tmux** — works out of the box.
+  - **Rex** — start mecha from a Rex terminal; mecha uses the `rex` CLI and the terminal's `REX_SERVER` / `REX_SESSION` / `REX_BLOCK` context to split beside the Coordinator.
   - **iTerm2** — requires the Python API: **Preferences** (`⌘,`) → **General** → **Magic** → enable **✓ Enable Python API**.
   - **Ghostty** — panes are driven via AppleScript, so a recent version with AppleScript support is required; on first spawn, macOS will ask for Automation permission for Ghostty — allow it.
 

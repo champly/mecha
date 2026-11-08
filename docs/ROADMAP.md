@@ -7,7 +7,7 @@
 
 ### 1.1 已落地
 
-- `mecha run`：交互模式，终端后端为 tmux/iTerm2/Ghostty。
+- `mecha run`：交互模式，终端后端为 tmux/Rex/iTerm2/Ghostty。
 - `mecha serve`：无 TTY 常驻模式，默认 headless backend。
 - `pkg/term/headless`：直接启动 agentd 和 agent，保留 PTY，不依赖终端 pane。
 - SIGINT/SIGTERM 优雅退出；先终止 agent 进程组，再关闭 Core 连接。

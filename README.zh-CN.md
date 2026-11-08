@@ -2,13 +2,13 @@
 
 **把你的终端变成一支多 agent 开发团队。**（[English](README.md)）
 
-你只需和 **Coordinator** 对话：它拆解需求、把任务派发给 **Specialist**——每个 Specialist 按需拉起，跑在独立的 tmux / iTerm2 / Ghostty pane 里，执行过程全程围观。任务状态由 agent 的 hook 事件驱动（无轮询），agent 本身可插拔：Claude Code、Codex、Gemini、CodeBuddy、Pi，可按 role 混用。
+你只需和 **Coordinator** 对话：它拆解需求、把任务派发给 **Specialist**——每个 Specialist 按需拉起，跑在独立的 tmux / Rex / iTerm2 / Ghostty pane 里，执行过程全程围观。任务状态由 agent 的 hook 事件驱动（无轮询），agent 本身可插拔：Claude Code、Codex、Gemini、CodeBuddy、Pi，可按 role 混用。
 
 ## 特性
 
 - **Coordinator + Specialist 分工**：只有 Coordinator 的 prompt 会注入派发指令（`mecha ask` + 可用 role 列表），且 Core 拒绝向它派发任务；Specialist 只接任务、无派发能力。
 - **角色由你定义**：团队以 profile 形式声明在 `~/.mecha/config.yaml` 中——每个 role 的名字、prompt、使用的 agent 都可配置。默认的 `softwarecompany` profile（lead + architect / coder / tester / reviewer）只是一个示例团队。
-- **执行过程可见**：每个 Specialist 运行在独立的 tmux / iTerm2 / Ghostty pane 中。
+- **执行过程可见**：每个 Specialist 运行在独立的 tmux / Rex / iTerm2 / Ghostty pane 中。
 - **可插拔 agent**：支持 Claude Code、Codex、Gemini、CodeBuddy、Pi，不同 role 可混用不同 agent。
 - **Hook 驱动任务状态**：各 agent 通过生命周期 hook 回报任务完成，同时 Core 会处理进程退出和超时，无需轮询。
 - **单二进制**：Core、agentd、CLI 都在一个 `mecha` 二进制里，无外部服务依赖。
@@ -42,6 +42,7 @@ Hook 事件：agent ──► mecha webhook ──► agentd 本地 HTTP
 - 已安装并完成认证的 agent CLI 之一：`claude`、`codex`、`gemini`、`codebuddy` 或 `pi`。
 - 受支持的终端（自动检测，按优先级）：
   - **tmux**：无需额外配置。
+  - **Rex**：在 Rex 终端内启动 mecha 即可；mecha 通过 `rex` CLI 以及终端提供的 `REX_SERVER` / `REX_SESSION` / `REX_BLOCK` 上下文，在 Coordinator 旁创建 pane。
   - **iTerm2**：需开启 Python API：**Preferences**（`⌘,`）→ **General** → **Magic** → 勾选 **✓ Enable Python API**。
   - **Ghostty**：分屏通过 AppleScript 驱动，需要支持 AppleScript 的较新版本；首次分屏时 macOS 会弹出针对 Ghostty 的"自动化"权限请求，请允许。
 
