@@ -18,14 +18,38 @@ import (
 var defaultConfigYAML []byte
 
 const (
-	configDirName  = ".mecha"
-	configFileName = "config.yaml"
-	rolesDirName   = "roles"
+	configDirName     = ".mecha"
+	configFileName    = "config.yaml"
+	workspacesDirName = "workspaces"
+	rolesDirName      = "roles"
 )
 
-// RoleDir returns the project-local role directory path.
-func RoleDir(workspace, roleName string) string {
-	return filepath.Join(workspace, configDirName, rolesDirName, roleName)
+// WorkspaceDir returns the global directory for generated workspace data.
+func WorkspaceDir(workspace string) (string, error) {
+	dir, err := MechaDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, workspacesDirName, workspaceDirName(workspace)), nil
+}
+
+// RoleDir returns the global directory for a workspace role's generated files.
+func RoleDir(workspace, roleName string) (string, error) {
+	if roleName == "" || roleName == "." || roleName == ".." || strings.ContainsAny(roleName, `/\`) {
+		return "", fmt.Errorf("config: invalid role directory name %q", roleName)
+	}
+	dir, err := WorkspaceDir(workspace)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, rolesDirName, roleName), nil
+}
+
+// workspaceDirName flattens an absolute workspace path using the same naming
+// rule as logs, for example /Users/x/proj -> Users_x_proj.
+func workspaceDirName(workspace string) string {
+	name := strings.TrimLeft(workspace, "/")
+	return strings.ReplaceAll(name, "/", "_")
 }
 
 // MechaBinary is the default mecha binary path, copied into Runtime.MechaBinary
@@ -58,9 +82,7 @@ func LogPath(workspace string) (string, error) {
 		return "", err
 	}
 
-	name := strings.TrimLeft(workspace, "/")
-	name = strings.ReplaceAll(name, "/", "_")
-	logDir := filepath.Join(dir, "logs", name)
+	logDir := filepath.Join(dir, "logs", workspaceDirName(workspace))
 
 	return filepath.Join(logDir, time.Now().Format(time.DateOnly)+".log"), nil
 }
@@ -221,6 +243,9 @@ func (c Config) validate(validType func(string) bool) error {
 			roleName := strings.TrimSpace(role.Name)
 			if roleName == "" {
 				return fmt.Errorf("config: profile %q has a role with empty name", profileName)
+			}
+			if roleName == "." || roleName == ".." || strings.ContainsAny(roleName, `/\`) {
+				return fmt.Errorf("config: profile %q has invalid role name %q", profileName, roleName)
 			}
 			if _, exists := roleNames[roleName]; exists {
 				return fmt.Errorf("config: duplicate role name %q in profile %q", roleName, profileName)

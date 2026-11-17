@@ -59,3 +59,16 @@ func BuildEnv(user, defaults map[string]string) []string {
 	}
 	return env
 }
+
+// SetEnv replaces key in an environment slice so exec.Cmd receives no
+// duplicate entries.
+func SetEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return append(out, prefix+value)
+}

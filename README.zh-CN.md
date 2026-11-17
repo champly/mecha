@@ -131,6 +131,7 @@ profiles:
 - role 默认继承 `agent`；可通过 `agent.name` 覆盖。
 - 每个 profile 必须且只能有一个 `is_coordinator: true` 的 role。
 - 日志：`mecha` / `mecha run` 写 `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`；`mecha serve` 写 stdout 且不创建日志文件，由 nohup/systemd/launchd 重定向。
+- role 生成物（prompt、hook/settings）统一写到 `~/.mecha/workspaces/<workspace>/roles/<role>/`，与 `~/.mecha/logs/<workspace>/` 使用相同的 workspace 目录名；不再写入项目内的 `.mecha`。旧版本留下的项目 `.mecha` 已不再使用，可按需手动删除。
 
 ## 命令一览
 

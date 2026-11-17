@@ -14,7 +14,7 @@ import (
 // AgentContext bundles the runtime environment for an agent instance.
 type AgentContext struct {
 	Workspace   string // project root (cmd.Dir)
-	RoleDir     string // agent-specific files (CLAUDE.md, settings.json)
+	RoleDir     string // global agent-specific files (CLAUDE.md, settings.json)
 	Prompt      string // role instruction (injected via --append-system-prompt-file)
 	WebhookAddr string // agentd address to POST hook events to
 }

@@ -40,9 +40,14 @@ func NewFromConfig(workspace, prompt, roleName, webhookAddr string, agentCfg con
 		return nil, fmt.Errorf("agent: unknown agent type %q", agentCfg.Type)
 	}
 
+	roleDir, err := config.RoleDir(workspace, roleName)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx := agentprovider.AgentContext{
 		Workspace:   workspace,
-		RoleDir:     config.RoleDir(workspace, roleName),
+		RoleDir:     roleDir,
 		Prompt:      prompt,
 		WebhookAddr: webhookAddr,
 	}

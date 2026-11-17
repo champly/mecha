@@ -5,8 +5,11 @@
 package pi
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 
 	agentprovider "github.com/champly/mecha/pkg/agent/provider"
 	"github.com/champly/mecha/pkg/config"
@@ -32,57 +35,80 @@ func (p *Pi) piMdPath() string {
 	return filepath.Join(p.RoleDir, "PI.md")
 }
 
-func (p *Pi) settingsPath() string {
-	return filepath.Join(p.RoleDir, ".pi", "settings.json")
+func (p *Pi) extensionPath() string {
+	return filepath.Join(p.RoleDir, "mecha-hooks.ts")
 }
 
-// Prepare creates the Pi role directory with PI.md and .pi/settings.json.
+// Prepare creates the Pi role directory with its prompt and hook extension.
 func (p *Pi) Prepare() error {
 	if err := p.PrepareRoleFile("PI.md"); err != nil {
 		return err
 	}
-	return agentprovider.WriteJSONFile(p.settingsPath(), p.settings())
+	if err := os.WriteFile(p.extensionPath(), []byte(p.extensionSource()), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", p.extensionPath(), err)
+	}
+	return nil
 }
 
-func (p *Pi) settings() map[string]any {
-	// Pi hooks take a single shell command string, so quote paths with spaces.
-	webhookCmd := agentprovider.WebhookCommand(p.MechaBinary, p.WebhookAddr)
+func (p *Pi) extensionSource() string {
+	webhook := "http://" + p.WebhookAddr + "/webhook"
+	return fmt.Sprintf(`const webhook = %s;
 
-	return map[string]any{
-		"hooks": map[string]any{
-			agentprovider.EventSessionStart: []any{
-				map[string]any{
-					"matcher": "startup",
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": webhookCmd,
-						},
-					},
-				},
-			},
-			agentprovider.EventStop: []any{
-				map[string]any{
-					"matcher": "*",
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": webhookCmd,
-						},
-					},
-				},
-			},
-		},
-	}
+async function post(payload) {
+  try {
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // agentd may already be shutting down.
+  }
+}
+
+export default function (pi) {
+  let lastAssistant = "";
+
+  pi.on("agent_start", () => {
+    lastAssistant = "";
+  });
+
+  pi.on("message_end", (event) => {
+    if (event.message?.role !== "assistant") return;
+    const content = Array.isArray(event.message.content) ? event.message.content : [];
+    lastAssistant = content
+      .filter((part) => part?.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    await post({
+      hook_event_name: "SessionStart",
+      session_id: ctx.sessionManager.getSessionId(),
+    });
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    await post({
+      hook_event_name: "Stop",
+      session_id: ctx.sessionManager.getSessionId(),
+      last_assistant_message: lastAssistant,
+    });
+  });
+}
+`, strconv.Quote(webhook))
 }
 
 // Cmd builds the *exec.Cmd for launching the Pi agent.
 //
-// Pi reads .pi/settings.json from its working directory, so the role directory
-// is the CWD; the workspace stays reachable via parent-directory traversal.
+// Pi keeps the project as its working directory. The generated extension
+// supplies lifecycle hooks without overriding the user's Pi agent directory.
 func (p *Pi) Cmd() *exec.Cmd {
 	cmd := p.NewAgentCmd(piBinary, nil, nil)
-	cmd.Args = append(cmd.Args, "--append-system-prompt", p.Prompt)
-	cmd.Dir = p.RoleDir
+	cmd.Args = append(cmd.Args,
+		"--append-system-prompt", p.piMdPath(),
+		"--extension", p.extensionPath(),
+	)
 	return cmd
 }

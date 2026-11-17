@@ -88,9 +88,11 @@ mecha run
 |---|---|
 | `~/.mecha/config.yaml` | 全局配置（`mecha init` 写出，`mecha run` 加载，可用 `--config` 覆盖） |
 | `~/.mecha/logs/<workspace 扁平化>/<YYYY-MM-DD>.log` | Core 与 agentd 共用日志（追加） |
-| `<workspace>/.mecha/roles/<role>/` | role 生成物（prompt 文件、hook settings），项目级 |
+| `~/.mecha/workspaces/<workspace 扁平化>/roles/<role>/` | role 生成物（prompt 文件、hook settings），按 workspace 隔离 |
 
 日志目录名规则：workspace 路径去掉前导 `/`，其余 `/` 替换为 `_`（如 `/Users/x/proj` → `Users_x_proj`），文件名为本地时区日期。
+
+`workspaces` 与 `logs` 使用同一个 workspace 扁平化目录名，例如 `/Users/x/proj` 对应 `~/.mecha/workspaces/Users_x_proj/roles/<role>/` 和 `~/.mecha/logs/Users_x_proj/`。旧版本创建的 `<workspace>/.mecha/` 不再读取。
 
 ### 3.2 配置结构
 
@@ -219,7 +221,7 @@ type Runtime struct {           // 非 yaml，启动期构造
 
 ### 4.3 生成物与 prompt 渲染
 
-role 目录 `<workspace>/.mecha/roles/<role>/` 的内容因 agent 类型而异（见 §7）。
+role 目录 `~/.mecha/workspaces/<workspace 扁平化>/roles/<role>/` 的内容因 agent 类型而异（见 §7）。
 
 prompt 由 Core 在 Register 时用 `agent.RenderPrompt` 渲染，模板三段：
 
@@ -555,7 +557,7 @@ type Agent interface {
 
 type AgentContext struct {
     Workspace   string  // 项目根目录
-    RoleDir     string  // <workspace>/.mecha/roles/<role>
+    RoleDir     string  // ~/.mecha/workspaces/<workspace-key>/roles/<role>
     Prompt      string  // 渲染后的 role prompt
     WebhookAddr string  // agentd 本地 webhook 地址
 }
@@ -580,12 +582,12 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | | claude | codex | gemini | codebuddy | pi |
 |---|---|---|---|---|---|
 | 默认 binary | `claude` | `codex` | `gemini` | `codebuddy` | `pi` |
-| Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `.gemini/settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `.pi/settings.json` |
+| Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `mecha-hooks.ts` |
 | defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` + `dangerously-bypass-hook-trust: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
 | defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=1200000` | 无 | 无 | `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
-| prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | cmd.Dir=RoleDir，CLI 自行发现 `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <prompt 原文>` + cmd.Dir=RoleDir（双路） |
-| cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | **RoleDir** | Workspace | **RoleDir** |
-| hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `.gemini/settings.json`，shell 字符串 command | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `.pi/settings.json`，shell 字符串 command |
+| prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | `--include-directories <RoleDir>` + `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <PI.md>` |
+| cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | Workspace | Workspace | Workspace |
+| hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `GEMINI_CLI_SYSTEM_SETTINGS_PATH=<RoleDir>/settings.json` | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `--extension <RoleDir>/mecha-hooks.ts` |
 | 注册的 hook 事件 | SessionStart / UserPromptSubmit / Stop / StopFailure / Notification | SessionStart / UserPromptSubmit / Stop / Interrupt | SessionStart / **BeforeAgent** / **AfterAgent** / Notification | SessionStart / UserPromptSubmit / Stop / StopFailure / Notification | SessionStart / Stop |
 | 事件映射 | UserPromptSubmit、Notification | UserPromptSubmit、Interrupt；**无 StopFailure** | BeforeAgent → PromptSubmit；AfterAgent → Stop | UserPromptSubmit、Notification | SessionStart / Stop 同名映射 |
 | 轮次标识 | `prompt_id`（需实测确认 Stop payload） | `turn_id` | 无，prompt 完整匹配 | `generation_id`（可选） | 无，屏幕 Busy 兜底 |

@@ -131,6 +131,7 @@ profiles:
 - A role inherits `agent` by default; set `agent.name` to override it.
 - Every profile must have exactly one role with `is_coordinator: true`.
 - Logs: `mecha` / `mecha run` write structured text to `~/.mecha/logs/<workspace>/<YYYY-MM-DD>.log`. `mecha serve` writes process logs to stdout and creates no log file; redirect with nohup/systemd/launchd.
+- Generated role files (prompts, hooks, and settings) live under `~/.mecha/workspaces/<workspace>/roles/<role>/`, using the same workspace name as `~/.mecha/logs/<workspace>/`; mecha no longer writes `.mecha` into projects. Project-local `.mecha` directories left by older versions are unused and can be removed manually.
 
 ## Commands
 

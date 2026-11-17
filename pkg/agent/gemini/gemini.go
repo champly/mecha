@@ -34,7 +34,7 @@ func (g *Gemini) geminiMdPath() string {
 }
 
 func (g *Gemini) settingsPath() string {
-	return filepath.Join(g.RoleDir, ".gemini", "settings.json")
+	return filepath.Join(g.RoleDir, "settings.json")
 }
 
 // Prepare creates the full Gemini CLI role directory.
@@ -95,14 +95,19 @@ func (g *Gemini) settings() map[string]any {
 				},
 			},
 		},
+		"context": map[string]any{
+			"loadMemoryFromIncludeDirectories": true,
+		},
 	}
 }
 
 // Cmd builds the *exec.Cmd for launching the Gemini CLI agent.
 func (g *Gemini) Cmd() *exec.Cmd {
 	cmd := g.NewAgentCmd(geminiBinary, defaultParams, nil)
-	// Gemini discovers GEMINI.md by walking up from the working directory, so
-	// the role directory must be the CWD for the prompt file to load.
-	cmd.Dir = g.RoleDir
+	// Keep the project as the working directory. The role directory is added as
+	// an included workspace so its GEMINI.md is loaded as role context, while
+	// generated settings are supplied explicitly from the global mecha dir.
+	cmd.Args = append(cmd.Args, "--include-directories", g.RoleDir)
+	cmd.Env = agentprovider.SetEnv(cmd.Env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH", g.settingsPath())
 	return cmd
 }

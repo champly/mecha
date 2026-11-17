@@ -3,6 +3,7 @@ package gemini
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,6 +96,9 @@ func TestWriteSettings(t *testing.T) {
 			t.Errorf("settings.json missing hook event %q", event)
 		}
 	}
+	if !strings.Contains(string(data), `"loadMemoryFromIncludeDirectories": true`) {
+		t.Errorf("settings.json should load context from the included role directory, got: %s", data)
+	}
 }
 
 func TestParseHookEvent_BeforeAgent(t *testing.T) {
@@ -134,20 +138,31 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.RoleDir {
-		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, c.RoleDir)
+	if cmd.Dir != c.Workspace {
+		t.Errorf("cmd.Dir = %q, want workspace %q", cmd.Dir, c.Workspace)
+	}
+	if !slices.Contains(cmd.Args, "--include-directories") || !slices.Contains(cmd.Args, c.RoleDir) {
+		t.Errorf("args should include role context directory %q: %v", c.RoleDir, cmd.Args)
 	}
 
+	foundSettings := false
 	for _, env := range cmd.Env {
 		if strings.HasPrefix(env, "GEMINI_CLI_HOME=") {
 			t.Errorf("cmd.Env should not override Gemini config root: %v", cmd.Env)
 		}
 		if strings.HasPrefix(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH=") {
-			t.Errorf("cmd.Env should not override system settings path: %v", cmd.Env)
+			foundSettings = true
+			want := "GEMINI_CLI_SYSTEM_SETTINGS_PATH=" + c.settingsPath()
+			if env != want {
+				t.Errorf("settings env = %q, want %q", env, want)
+			}
 		}
 		if strings.HasPrefix(env, "GEMINI_SYSTEM_MD=") {
 			t.Errorf("cmd.Env should not override system prompt path: %v", cmd.Env)
 		}
+	}
+	if !foundSettings {
+		t.Errorf("cmd.Env missing generated settings path: %v", cmd.Env)
 	}
 }
 

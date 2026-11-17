@@ -71,3 +71,11 @@ func TestBuildEnv(t *testing.T) {
 		t.Errorf("unexpected env entry NOPE=%q", v)
 	}
 }
+
+func TestSetEnvReplacesExistingKey(t *testing.T) {
+	got := SetEnv([]string{"A=1", "KEY=old", "B=2"}, "KEY", "new")
+	want := []string{"A=1", "B=2", "KEY=new"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SetEnv() = %v, want %v", got, want)
+	}
+}

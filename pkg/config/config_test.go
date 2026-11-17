@@ -104,6 +104,22 @@ func TestValidateDuplicateRoleName(t *testing.T) {
 	}
 }
 
+func TestValidateInvalidRoleName(t *testing.T) {
+	cfg := Config{
+		Profile: "p1",
+		Agents:  []AgentConfig{{Name: "a", Type: "claude"}},
+		Profiles: map[string]ProfileConfig{
+			"p1": {Roles: []Role{
+				{Name: "..", IsCoordinator: true, Agent: AgentConfig{Name: "a"}},
+			}},
+		},
+	}
+	err := cfg.validate(nil)
+	if err == nil || err.Error() != `config: profile "p1" has invalid role name ".."` {
+		t.Errorf("validate() = %v, want invalid-role-name error", err)
+	}
+}
+
 func TestValidateEmptyRoleName(t *testing.T) {
 	cfg := Config{
 		Profile: "p1",
@@ -120,6 +136,59 @@ func TestValidateEmptyRoleName(t *testing.T) {
 	}
 	if err.Error() != `config: profile "p1" has a role with empty name` {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRoleDirUsesGlobalWorkspaceDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workspace := "/Users/test/project"
+	got, err := RoleDir(workspace, "lead")
+	if err != nil {
+		t.Fatalf("RoleDir: %v", err)
+	}
+
+	want := filepath.Join(home, ".mecha", "workspaces", "Users_test_project", "roles", "lead")
+	if got != want {
+		t.Errorf("RoleDir = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(got, filepath.Join(workspace, ".mecha")) {
+		t.Errorf("RoleDir = %q, still points into the project", got)
+	}
+	if filepath.Base(got) != "lead" || filepath.Base(filepath.Dir(got)) != "roles" {
+		t.Errorf("RoleDir = %q, want .../roles/lead", got)
+	}
+}
+
+func TestWorkspaceAndLogDirectoriesShareName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	workspace := "/Users/test/project"
+	workspaceDir, err := WorkspaceDir(workspace)
+	if err != nil {
+		t.Fatalf("WorkspaceDir: %v", err)
+	}
+	logPath, err := LogPath(workspace)
+	if err != nil {
+		t.Fatalf("LogPath: %v", err)
+	}
+
+	wantName := "Users_test_project"
+	if got := filepath.Base(workspaceDir); got != wantName {
+		t.Errorf("workspace directory name = %q, want %q", got, wantName)
+	}
+	if got := filepath.Base(filepath.Dir(logPath)); got != wantName {
+		t.Errorf("log directory name = %q, want %q", got, wantName)
+	}
+}
+
+func TestRoleDirRejectsUnsafeRoleName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if _, err := RoleDir("/tmp/project", "../escape"); err == nil {
+		t.Fatal("RoleDir should reject path separators in a role name")
 	}
 }
 

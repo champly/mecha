@@ -72,28 +72,28 @@ func TestWritePrompt(t *testing.T) {
 	}
 }
 
-func TestWriteSettings(t *testing.T) {
+func TestWriteExtension(t *testing.T) {
 	dir := t.TempDir()
 	c := testNew(dir, filepath.Join(dir, "role"), "prompt")
 
-	if err := agentprovider.WriteJSONFile(c.settingsPath(), c.settings()); err != nil {
-		t.Fatalf("WriteJSONFile() error: %v", err)
+	if err := os.MkdirAll(c.RoleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c.extensionPath(), []byte(c.extensionSource()), 0o644); err != nil {
+		t.Fatalf("write extension: %v", err)
 	}
 
-	data, err := os.ReadFile(c.settingsPath())
+	data, err := os.ReadFile(c.extensionPath())
 	if err != nil {
-		t.Fatalf("read settings.json: %v", err)
+		t.Fatalf("read extension: %v", err)
 	}
 
-	if !strings.Contains(string(data), c.MechaBinary) {
-		t.Errorf("settings.json missing mecha path, got: %s", data)
-	}
 	if !strings.Contains(string(data), c.WebhookAddr) {
-		t.Errorf("settings.json missing webhook addr, got: %s", data)
+		t.Errorf("extension missing webhook addr, got: %s", data)
 	}
-	for _, event := range []string{"SessionStart", "Stop"} {
+	for _, event := range []string{`"session_start"`, `"agent_settled"`, "SessionStart", "Stop"} {
 		if !strings.Contains(string(data), event) {
-			t.Errorf("settings.json missing hook event %q", event)
+			t.Errorf("extension missing event %q", event)
 		}
 	}
 }
@@ -110,8 +110,8 @@ func TestPrepare(t *testing.T) {
 	if _, err := os.Stat(c.piMdPath()); err != nil {
 		t.Errorf("PI.md not created: %v", err)
 	}
-	if _, err := os.Stat(c.settingsPath()); err != nil {
-		t.Errorf("settings.json not created: %v", err)
+	if _, err := os.Stat(c.extensionPath()); err != nil {
+		t.Errorf("hook extension not created: %v", err)
 	}
 }
 
@@ -122,12 +122,15 @@ func TestCmd(t *testing.T) {
 
 	cmd := c.Cmd()
 
-	if cmd.Dir != c.RoleDir {
-		t.Errorf("cmd.Dir = %q, want %q (Pi discovers .pi/ relative to CWD)", cmd.Dir, c.RoleDir)
+	if cmd.Dir != c.Workspace {
+		t.Errorf("cmd.Dir = %q, want workspace %q", cmd.Dir, c.Workspace)
 	}
 
 	if !slices.Contains(cmd.Args, "--append-system-prompt") {
 		t.Errorf("--append-system-prompt should be present in args: %v", cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, "--extension") || !slices.Contains(cmd.Args, c.extensionPath()) {
+		t.Errorf("generated extension should be present in args: %v", cmd.Args)
 	}
 
 	// Pi has no permission system, so no -y flag should be present.
