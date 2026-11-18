@@ -150,7 +150,7 @@ func (s *vtScreenParser) trackModes(p []byte) {
 		if j >= len(data) || (data[j] != 'h' && data[j] != 'l') {
 			continue
 		}
-		for _, mode := range bytes.Split(data[i+3:j], []byte(";")) {
+		for mode := range bytes.SplitSeq(data[i+3:j], []byte(";")) {
 			if bytes.Equal(mode, []byte("2004")) {
 				s.bracketedPaste = data[j] == 'h'
 			}
@@ -206,7 +206,7 @@ func (s *vtScreenParser) handleOSC(payload string) {
 	if !strings.HasPrefix(payload, "7501;") {
 		return
 	}
-	for _, field := range strings.Split(strings.TrimPrefix(payload, "7501;"), ":") {
+	for field := range strings.SplitSeq(strings.TrimPrefix(payload, "7501;"), ":") {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {
 			continue

@@ -315,10 +315,7 @@ func (a *Agentd) stopAgent() {
 		stopDeadline := time.Now().Add(agentStopGrace + agentKillWait)
 		a.terminateAgentGroup(pid)
 		if a.agentDone != nil {
-			remaining := time.Until(stopDeadline)
-			if remaining < 0 {
-				remaining = 0
-			}
+			remaining := max(time.Until(stopDeadline), 0)
 			timer := time.NewTimer(remaining)
 			defer timer.Stop()
 			select {

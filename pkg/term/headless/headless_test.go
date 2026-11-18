@@ -215,11 +215,9 @@ func TestRepeatedStopAndWait(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 4)
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			errs <- b.Kill(context.Background(), h)
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -461,7 +459,7 @@ func groupMembers(t *testing.T, pgid int) []string {
 		t.Fatalf("ps: %v", err)
 	}
 	var members []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
@@ -504,7 +502,7 @@ func ptmxFDCount(t *testing.T) (int, bool) {
 			t.Fatalf("lsof: %v", err)
 		}
 		n := 0
-		for _, line := range strings.Split(string(out), "\n") {
+		for line := range strings.SplitSeq(string(out), "\n") {
 			if strings.HasSuffix(strings.TrimPrefix(line, "n"), "/ptmx") {
 				n++
 			}
@@ -571,7 +569,7 @@ func TestControllingTerminal(t *testing.T) {
 }
 
 func firstLineWithPrefix(s, prefix string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, prefix) {
 			return line
@@ -826,7 +824,7 @@ func TestBlockedWriterRepeatedNoLeak(t *testing.T) {
 	beforeFDs, okFDs := ptmxFDCount(t)
 
 	const iterations = 100
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		w := newBlockWriter()
 		raw, err := b.Spawn(context.Background(), driver.Spec{
 			Command: []string{"sh", "-c", "printf 'READY\n'; exit 0"},
@@ -882,7 +880,7 @@ func TestRepeatedSpawnStopNoLeak(t *testing.T) {
 	t.Logf("baseline: goroutines=%d ptmx_fds=%d (fd measurement=%v)", baselineGoroutines, beforeFDs, okFDs)
 
 	const iterations = 100
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		ctx, cancel := context.WithCancel(context.Background())
 		h, err := b.Spawn(ctx, driver.Spec{Command: []string{"sleep", "30"}})
 		if err != nil {

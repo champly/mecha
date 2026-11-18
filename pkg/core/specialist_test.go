@@ -90,9 +90,9 @@ func (f *fakeBackend) spawnCount(role string) int {
 func (f *fakeBackend) lastSpec(role string) (term.Spec, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for i := len(f.specs) - 1; i >= 0; i-- {
-		if f.specs[i].Role == role {
-			return f.specs[i], true
+	for _, v := range slices.Backward(f.specs) {
+		if v.Role == role {
+			return v, true
 		}
 	}
 	return term.Spec{}, false

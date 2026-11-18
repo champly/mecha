@@ -87,7 +87,7 @@ func collectDescendantsWithin(rootPID int, deadline time.Time) ([]int, error) {
 // returns a parent-PID -> child-PID index from "pid ppid" pairs.
 func parseProcessTable(out []byte) map[int][]int {
 	children := make(map[int][]int)
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue

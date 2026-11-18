@@ -1,6 +1,9 @@
 package provider
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // InputState describes what the provider's TUI input area currently allows.
 type InputState uint8
@@ -105,8 +108,8 @@ func (c CommonTUI) Classify(s ScreenSnapshot) Classification {
 		}
 	}
 
-	for i := len(rows) - 1; i >= 0; i-- {
-		value, ok := InputLineValue(rows[i], c.PromptAnchors)
+	for _, row := range slices.Backward(rows) {
+		value, ok := InputLineValue(row, c.PromptAnchors)
 		if !ok {
 			continue
 		}

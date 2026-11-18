@@ -325,11 +325,9 @@ func (a *Agentd) handleHook(ev agentprovider.HookEvent) {
 
 func (a *Agentd) startStatusLoop() {
 	a.statusOnce.Do(func() {
-		a.statusWG.Add(1)
-		go func() {
-			defer a.statusWG.Done()
+		a.statusWG.Go(func() {
 			a.statusLoop()
-		}()
+		})
 	})
 }
 
