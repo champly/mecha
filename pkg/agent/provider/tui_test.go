@@ -38,3 +38,9 @@ func TestNormalizePrompt(t *testing.T) {
 		t.Errorf("NormalizePrompt = %q", got)
 	}
 }
+
+func TestCanonicalPrompt(t *testing.T) {
+	if got := CanonicalPrompt("  a\r\nb\rc  "); got != "abc" {
+		t.Errorf("CanonicalPrompt = %q", got)
+	}
+}

@@ -221,7 +221,7 @@ func (s *sessionActor) enqueueTask(req *api.TaskRequest) (chan taskResult, bool)
 	p := &pendingTask{
 		request:  req,
 		resultCh: make(chan taskResult, 1),
-		prompt:   agentprovider.NormalizePrompt(req.Task),
+		prompt:   agentprovider.CanonicalPrompt(req.Task),
 	}
 	return p.resultCh, s.enqueue(sessionEvent{kind: sessionTask, task: p})
 }
@@ -369,7 +369,7 @@ func (s *sessionActor) handleHook(ev agentprovider.HookEvent) {
 }
 
 func (s *sessionActor) handlePromptSubmit(ev agentprovider.HookEvent) {
-	prompt := agentprovider.NormalizePrompt(ev.Prompt)
+	prompt := agentprovider.CanonicalPrompt(ev.Prompt)
 	if s.current != nil && prompt != "" && prompt == s.current.prompt {
 		if ev.TurnID != "" {
 			s.current.turnID = ev.TurnID

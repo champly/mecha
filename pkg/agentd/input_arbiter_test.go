@@ -100,7 +100,7 @@ func TestEncodeTaskInputUsesLiveBracketedPasteMode(t *testing.T) {
 	}
 
 	got = string(encodeTaskInput("a\nb", false))
-	if got != "a b" {
+	if got != "ab" {
 		t.Fatalf("literal payload = %q, want one line", got)
 	}
 }

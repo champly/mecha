@@ -290,6 +290,135 @@ func TestSessionReadySubmitAndTurnResult(t *testing.T) {
 	}
 }
 
+func TestSessionEnqueuesCanonicalPrompt(t *testing.T) {
+	s, _ := newSessionTestHost(t, true)
+	resultCh, ok := s.enqueueTask(&api.TaskRequest{Id: "t1", Task: "first\nsecond"})
+	if !ok {
+		t.Fatal("task was not enqueued")
+	}
+	if resultCh == nil {
+		t.Fatal("task result channel is nil")
+	}
+
+	select {
+	case ev := <-s.events:
+		if ev.kind != sessionTask || ev.task == nil {
+			t.Fatalf("event = %+v", ev)
+		}
+		if got := ev.task.prompt; got != "firstsecond" {
+			t.Fatalf("pending prompt = %q, want %q", got, "firstsecond")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for enqueued task")
+	}
+}
+
+func TestSessionMultilinePromptWithCollapsedHookSucceeds(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "first\n\nsecond"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   agentprovider.CanonicalPrompt("first\n\nsecond"),
+	}
+	s.handleTask(p)
+	requireCommand(t, host.commands, inputTaskText)
+	s.handleInput(inputEvent{action: inputTaskText})
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:  agentprovider.EventPromptSubmit,
+		TurnID: "turn-1",
+		Prompt: "firstsecond",
+	})
+	if s.phase != phaseRunning || s.owner != ownerCore {
+		t.Fatalf("core turn state = phase:%s owner:%d", s.phase, s.owner)
+	}
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:  agentprovider.EventStop,
+		TurnID: "turn-1",
+		Output: "done",
+	})
+	if got := requireResult(t, p.resultCh); !got.success || got.result != "done" {
+		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestSessionMultilinePromptWithPreservedHookSucceeds(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "first\n\nsecond"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   agentprovider.CanonicalPrompt("first\n\nsecond"),
+	}
+	s.handleTask(p)
+	requireCommand(t, host.commands, inputTaskText)
+	s.handleInput(inputEvent{action: inputTaskText})
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:  agentprovider.EventPromptSubmit,
+		TurnID: "turn-1",
+		Prompt: "first\n\nsecond",
+	})
+	if s.phase != phaseRunning || s.owner != ownerCore {
+		t.Fatalf("core turn state = phase:%s owner:%d", s.phase, s.owner)
+	}
+}
+
+func TestSessionSingleLinePromptStillMatches(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "single line"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   agentprovider.CanonicalPrompt("single line"),
+	}
+	s.handleTask(p)
+	requireCommand(t, host.commands, inputTaskText)
+	s.handleInput(inputEvent{action: inputTaskText})
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:  agentprovider.EventPromptSubmit,
+		TurnID: "turn-1",
+		Prompt: "single line",
+	})
+	if s.phase != phaseRunning || s.owner != ownerCore {
+		t.Fatalf("core turn state = phase:%s owner:%d", s.phase, s.owner)
+	}
+}
+
+func TestSessionDifferentPromptStillFailsAsOvertaken(t *testing.T) {
+	s, host := newSessionTestHost(t, true)
+	s.handleScreen(snapshot(1, "EMPTY"))
+	s.handleTimer(timerSettle)
+
+	p := &pendingTask{
+		request:  &api.TaskRequest{Id: "t1", Task: "first\nsecond"},
+		resultCh: make(chan taskResult, 1),
+		prompt:   agentprovider.CanonicalPrompt("first\nsecond"),
+	}
+	s.handleTask(p)
+	requireCommand(t, host.commands, inputTaskText)
+	s.handleInput(inputEvent{action: inputTaskText})
+
+	s.handleHook(agentprovider.HookEvent{
+		Event:  agentprovider.EventPromptSubmit,
+		TurnID: "turn-1",
+		Prompt: "different prompt",
+	})
+	result := requireResult(t, p.resultCh)
+	if result.success || !strings.Contains(result.result, "overtaken") {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestSessionUsesPostPasteFrameWhenProviderStaysIdle(t *testing.T) {
 	s, host := newSessionTestHost(t, true)
 	s.handleScreen(snapshot(1, "EMPTY"))

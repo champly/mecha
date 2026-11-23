@@ -191,26 +191,12 @@ func (a *inputArbiter) emit(ev inputEvent) {
 }
 
 func encodeTaskInput(task string, bracketedPaste bool) []byte {
-	text := agentprovider.NormalizePrompt(task)
 	if !bracketedPaste {
-		text = singleLineTask(text)
-		return []byte(text)
+		return []byte(agentprovider.CanonicalPrompt(task))
 	}
+	text := agentprovider.NormalizePrompt(task)
 	text = escapeBracketedPaste(text)
 	return []byte(bracketedPasteStart + text + bracketedPasteEnd)
-}
-
-func singleLineTask(task string) string {
-	out := make([]byte, 0, len(task))
-	for i := 0; i < len(task); i++ {
-		switch task[i] {
-		case '\r', '\n':
-			out = append(out, ' ')
-		default:
-			out = append(out, task[i])
-		}
-	}
-	return string(out)
 }
 
 func escapeBracketedPaste(s string) string {

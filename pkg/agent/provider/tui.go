@@ -169,3 +169,10 @@ func NormalizePrompt(s string) string {
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return strings.TrimSpace(s)
 }
+
+// CanonicalPrompt returns the comparison form used for local tasks and
+// provider hook prompts. Some TUIs remove line breaks from the hook payload,
+// so line breaks cannot participate in matching.
+func CanonicalPrompt(s string) string {
+	return strings.ReplaceAll(NormalizePrompt(s), "\n", "")
+}
