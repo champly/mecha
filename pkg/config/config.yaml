@@ -5,18 +5,12 @@ agents:
   - name: claude-sonnet-4-6
     type: claude
     model: claude-sonnet-4-6
-    envs:
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192"
   - name: claude-opus-4-8
     type: claude
     model: claude-opus-4-8
-    envs:
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "16384"
   - name: codebuddy
     type: codebuddy
     model: sonnet
-    envs:
-      CODEBUDDY_CODE_MAX_OUTPUT_TOKENS: "8192"
   - name: pi
     type: pi
     model: claude-sonnet-4-20250514

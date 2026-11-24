@@ -16,9 +16,8 @@ var (
 		"dangerously-skip-permissions": true,
 	}
 	defaultEnvs = map[string]string{
-		"BASH_DEFAULT_TIMEOUT_MS":          "3600000",
-		"BASH_MAX_TIMEOUT_MS":              "3600000",
-		"CODEBUDDY_CODE_MAX_OUTPUT_TOKENS": "8192",
+		"BASH_DEFAULT_TIMEOUT_MS": "3600000",
+		"BASH_MAX_TIMEOUT_MS":     "3600000",
 	}
 )
 

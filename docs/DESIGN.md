@@ -584,7 +584,7 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | 默认 binary | `claude` | `codex` | `gemini` | `codebuddy` | `pi` |
 | Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `mecha-hooks.ts` |
 | defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` + `dangerously-bypass-hook-trust: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
-| defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` | 无 | 无 | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` + `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
+| defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` | 无 | 无 | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` | 无 |
 | prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | `--include-directories <RoleDir>` + `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <PI.md>` |
 | cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | Workspace | Workspace | Workspace |
 | hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `GEMINI_CLI_SYSTEM_SETTINGS_PATH=<RoleDir>/settings.json` | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `--extension <RoleDir>/mecha-hooks.ts` |
@@ -596,6 +596,7 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | StopFailure error 字段 | `error_type` 优先，否则 `error` | —（无此事件） | —（无此事件） | 同 claude | —（无此事件） |
 
 所有 agent 的 `--model <model>` 仅在 cfg.Model 非空时输出；settings 类文件均经 `WriteJSONFile` 原子写入。
+mecha 不设置任何 agent 的 `*_MAX_OUTPUT_TOKENS`，输出上限由各 agent 根据当前模型自行决定。
 
 **任务超时映射（按官方文档核对）：**
 
