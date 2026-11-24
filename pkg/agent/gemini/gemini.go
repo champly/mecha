@@ -98,6 +98,11 @@ func (g *Gemini) settings() map[string]any {
 		"context": map[string]any{
 			"loadMemoryFromIncludeDirectories": true,
 		},
+		"tools": map[string]any{
+			"shell": map[string]any{
+				"inactivityTimeout": 3600,
+			},
+		},
 	}
 }
 

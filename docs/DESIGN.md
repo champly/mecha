@@ -65,7 +65,7 @@ mecha run
 | 首次 `ask <role>` | Spawn 新 pane 启动 specialist agentd，等 register（5s）+ ready（45s） |
 | 再次 `ask <role>` | 复用健康实例，经 TaskChannel 下发任务 |
 | 任务完成 | agent 触发 Stop/StopFailure hook → agentd 回传 TaskResult → 实例回到 running |
-| 任务超时（30min） | Core 侧返回错误且实例保持 unhealthy；agentd 侧直接 signalStop 自杀 |
+| 任务超时（1h） | Core 侧返回错误且实例保持 unhealthy；agentd 侧直接 signalStop 自杀 |
 | agent 退出 | agentd 失败在途任务、上报 exited；Core 立即失败等待中的 Ask，实例标记 unhealthy |
 | 下次 `ask <role>` 且 unhealthy | destroy 旧实例（Kill pane），重建新 pane + 新 agentd + 新 agent |
 | Coordinator 退出 | shutdown：立即 Stop gRPC → 并行 Kill 所有 pane（总上限 1s）→ backend.Close |
@@ -264,17 +264,17 @@ mecha ask --addr <ADDR> <role> "<task>"   (unary，阻塞)
            ├── 状态 → busy
            ├── 先 drain resultCh 中的陈旧结果（上一个超时/取消任务遗留）
            ├── stream.Send(TaskRequest{uuid, task})
-           └── 单一 30min timer 循环 select：
+           └── 单一 1h timer 循环 select：
                ├── resultCh：id 不匹配 → 丢弃继续等（不重设 deadline）；匹配 → 返回
                ├── discCh 关闭（agentd 断连 / agent 退出）→ 立即返回 "agentd disconnected during task"
                ├── ctx.Done → 返回 ctx.Err()
                └── timer 到 → 返回 "core: task timeout"，状态保持 unhealthy（不恢复 running）
 ```
 
-- 结果投递（`deliverResult`）**永不阻塞**：resultCh 容量 1，满时 evict 旧结果再放新结果（满缓冲里只可能是陈旧结果，丢新结果会让 execute 挂满 30min）
+- 结果投递（`deliverResult`）**永不阻塞**：resultCh 容量 1，满时 evict 旧结果再放新结果（满缓冲里只可能是陈旧结果，丢新结果会让 execute 挂满 1h）
 - TaskChannel handler：metadata 取 `instance-id`（缺失 InvalidArgument），registry 查不到 NotFound；`attach` + `defer detach`；EOF/Canceled 视为正常拆流
 - `detach` 只在 **stream 指针相同**时生效：stale 流拆除不会误伤重连后的新流；生效时置 nil、`closeDisc()`、状态 → unhealthy
-- `markExited`（ReportStatus exited）同样 `closeDisc()`：agent 退出时在途任务立即失败，不等 agentd 断连或 30min 超时
+- `markExited`（ReportStatus exited）同样 `closeDisc()`：agent 退出时在途任务立即失败，不等 agentd 断连或 1h 超时
 
 ### 5.2 agentd 侧任务执行
 
@@ -288,7 +288,7 @@ handleTask（串行）:
   5. select：
      ├── pending resultCh 收到结果/带原因失败 → 回 TaskResult
      ├── stop → "agent exited during task"
-     └── 30min 超时 → 日志报错并 signalStop() 自杀（不回结果，让 Core 判 unhealthy 重建）
+     └── 1h 超时 → 日志报错并 signalStop() 自杀（不回结果，让 Core 判 unhealthy 重建）
 ```
 
 **就绪判定**：PTY 输出经 `charmbracelet/x/vt` 转成不可变屏幕快照，provider profile 分类为 `InputEmpty/InputDraft/InputBusy/InputBlocked/InputUnknown`。只有 `termios raw + InputEmpty + 可见内容 hash 300ms 不变` 才上报 started；光标闪烁、颜色或纯样式刷新不会重置 settle。静默窗口只用于去抖，不是就绪证明；未知状态和未知弹窗 fail closed，30s 后带原因上报 failed。Codex 额外解析 `OSC 7501;state=idle|working:app=codex` 作为首选状态信号，文本锚点只作兜底。
@@ -354,7 +354,7 @@ handleTask（串行）:
                     │                                               │
                     │            ┌──────────────┬───────────────────┼──────────┐
                     │            ▼              ▼                   ▼          ▼
-                    │       Stop (完成)    StopFailure (失败)   agent 退出   任务 30min 超时
+                    │       Stop (完成)    StopFailure (失败)   agent 退出   任务 1h 超时
                     │            └──────┬──────┘              断连            │
                     │                   ▼                        └─────┬──────┘
                     │                running                            ▼
@@ -479,7 +479,7 @@ message TaskResult    { string id = 1; bool success = 2; string result = 3; stri
 
 - 状态常量为 `started` / `failed` / `exited`；`failed` 携带可读 `reason`
 - `ReportStatus` 对未知 id 返回成功（空响应），不报错
-- 任务超时 `TaskTimeout = 30min` 为协议常量，Core 与 agentd 两侧共用
+- 任务超时 `TaskTimeout = 1h` 为协议常量，Core 与 agentd 两侧共用
 - 无 TLS、无鉴权，监听仅 127.0.0.1
 
 ### 6.2 agentd 本地 HTTP（webhook）
@@ -584,7 +584,7 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | 默认 binary | `claude` | `codex` | `gemini` | `codebuddy` | `pi` |
 | Prepare 写文件 | `CLAUDE.md` + `settings.json` | 仅 `AGENTS.md` | `GEMINI.md` + `settings.json` | `CODEBUDDY.md` + `settings.json` | `PI.md` + `mecha-hooks.ts` |
 | defaultParams | `dangerously-skip-permissions: true` | `dangerously-bypass-approvals-and-sandbox: true` + `dangerously-bypass-hook-trust: true` | `yolo: true` | `dangerously-skip-permissions: true` | 无（Pi 无权限系统） |
-| defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=1200000` | 无 | 无 | `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
+| defaultEnvs | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` | 无 | 无 | `BASH_DEFAULT_TIMEOUT_MS=3600000` + `BASH_MAX_TIMEOUT_MS=3600000` + `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS=8192` | 无 |
 | prompt 注入 | `--append-system-prompt-file <CLAUDE.md>` | `--config model_instructions_file=<AGENTS.md>` | `--include-directories <RoleDir>` + `GEMINI.md` | `--append-system-prompt <prompt 原文>`（内联） | `--append-system-prompt <PI.md>` |
 | cmd.Dir | Workspace | Workspace（另加 `--cd <Workspace>`） | Workspace | Workspace | Workspace |
 | hook 注入 | settings.json，command+args exec 数组 | 无 settings 文件，`--config hooks.<Event>=[...]` 内联 TOML，`type=command` + shell 字符串 command | `GEMINI_CLI_SYSTEM_SETTINGS_PATH=<RoleDir>/settings.json` | settings.json，**shell 字符串** command（CodeBuddy 只支持 shell-form） | `--extension <RoleDir>/mecha-hooks.ts` |
@@ -596,6 +596,16 @@ type Factory func(ctx AgentContext, cfg config.AgentConfig, runtime config.Runti
 | StopFailure error 字段 | `error_type` 优先，否则 `error` | —（无此事件） | —（无此事件） | 同 claude | —（无此事件） |
 
 所有 agent 的 `--model <model>` 仅在 cfg.Model 非空时输出；settings 类文件均经 `WriteJSONFile` 原子写入。
+
+**任务超时映射（按官方文档核对）：**
+
+| agent | 默认命令/任务相关超时 | mecha 设置 |
+|---|---|---|
+| Claude | Bash 默认 2min、最大 10min；API 请求与流空闲 watchdog 是网络超时，不限制任务执行时长 | `BASH_DEFAULT_TIMEOUT_MS`、`BASH_MAX_TIMEOUT_MS` 设为 1h；API/watchdog 保持官方默认 |
+| Codex | 后台终端空轮询默认 5min；一次性 exec 工具内部默认 10s，官方配置未暴露全局覆盖项 | `background_terminal_max_timeout=3600000`；一次性 exec 仍需模型按调用传 `timeout_ms` |
+| Gemini | shell 无输出超时默认 5min；模型请求超时是网络超时，不限制任务执行时长 | `tools.shell.inactivityTimeout=3600`（秒）；`model.requestTimeoutMs` 保持官方默认 |
+| CodeBuddy | Bash 默认 2min、最大 10min；首 token / 流空闲是网络超时，不限制任务执行时长 | `BASH_DEFAULT_TIMEOUT_MS`、`BASH_MAX_TIMEOUT_MS` 设为 1h；stream/first-token 保持官方默认 |
+| Pi | Bash 工具无默认超时；HTTP idle 默认 5min，只能通过 agent/project settings 配置 | mecha 不覆盖 Pi agent 目录，保留用户鉴权/配置；Bash 外层由 `api.TaskTimeout` 的 1h 限制 |
 
 ---
 
@@ -670,7 +680,7 @@ Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal
 | agentStartTimeout | 45s | Core 等 specialist ready；coordinator 不限时 |
 | paneKillTimeout | 5s | 单次 Kill pane |
 | paneShutdownTimeout | 1s | Coordinator 退出时并行 Kill 所有 pane 的总上限 |
-| TaskTimeout | 30min | 任务上限，Core/agentd 共用（`api.TaskTimeout`） |
+| TaskTimeout | 1h | 任务上限，Core/agentd 共用（`api.TaskTimeout`） |
 | screen settle | 300ms | InputEmpty 后的渲染去抖；未知状态不得放行 |
 | bootTimeout | 30s | 等待正面可操作 TUI 的上界，超时上报 failed |
 | task render | 1s | 等待任务文本进入 Draft/Busy 的 liveness 上界 |
@@ -700,7 +710,7 @@ Ghostty 注意：必须用 AppleScript `split` 命令（返回值即新 terminal
 | 无 resume | 未接入 agent 会话恢复机制 |
 | mecha 被 SIGKILL | coordinator 与 specialist pane 残留 |
 | TaskChannel 不重连 | agentd 侧流断开即 signalStop 退出，实例靠 Core 下次 ask 重建 |
-| 任务超时的体验 | 30min 超时后实例标记 unhealthy 重建，agent 内可能仍在生成 |
+| 任务超时的体验 | 1h 超时后实例标记 unhealthy 重建，agent 内可能仍在生成 |
 | TUI profile 版本耦合 | agent 升级改版可能导致 InputUnknown；系统会 fail closed 并返回原因，需要更新 profile fixture |
 | 运行中交互阻塞 | 权限/登录弹窗会快速失败当前 Core 任务，但保留 agent；用户处理后该轮结果不再回传 |
 | 用户占用排队 | 用户草稿、用户 running 或弹窗期间最多排队 10min，超时任务带原因失败 |

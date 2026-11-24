@@ -40,7 +40,7 @@ const (
 
 	// TaskTimeout bounds one task on both sides of the stream, so a stuck agent
 	// cannot wedge the role forever.
-	TaskTimeout = 30 * time.Minute
+	TaskTimeout = time.Hour
 )
 
 // AgentConfigFromNative converts config.AgentConfig to the proto type.

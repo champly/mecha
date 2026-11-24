@@ -52,6 +52,7 @@ func (c *Codex) configArgs() []string {
 	hookCommand := agentprovider.WebhookCommand(c.MechaBinary, c.WebhookAddr)
 	args := []string{
 		"--config", "model_instructions_file=" + strconv.Quote(c.agentsMdPath()),
+		"--config", "background_terminal_max_timeout=3600000",
 	}
 	// Current Codex does not define StopFailure; an abnormal turn is detected
 	// by the agent process exiting, Interrupt, or the task timeout.
