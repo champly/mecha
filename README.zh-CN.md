@@ -42,7 +42,7 @@ Hook 事件：agent ──► mecha webhook ──► agentd 本地 HTTP
 - 已安装并完成认证的 agent CLI 之一：`claude`、`codex`、`gemini`、`codebuddy` 或 `pi`。
 - 受支持的终端（自动检测，按优先级）：
   - **tmux**：无需额外配置。
-  - **Rex**：在 Rex 终端内启动 mecha 即可；mecha 通过 `rex` CLI 以及终端提供的 `REX_SERVER` / `REX_SESSION` / `REX_BLOCK` 上下文，在 Coordinator 旁创建 pane。
+  - **Rex**：在 Rex 终端内启动 mecha 即可；mecha 通过 `rex` CLI 以及终端提供的 `REX_BLOCK`（及可选的 `REX_SERVER`）上下文，在 Coordinator 旁创建 pane。
   - **iTerm2**：需开启 Python API：**Preferences**（`⌘,`）→ **General** → **Magic** → 勾选 **✓ Enable Python API**。
   - **Ghostty**：分屏通过 AppleScript 驱动，需要支持 AppleScript 的较新版本；首次分屏时 macOS 会弹出针对 Ghostty 的"自动化"权限请求，请允许。
 

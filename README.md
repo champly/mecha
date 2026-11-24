@@ -42,7 +42,7 @@ Hook events: agent ──► mecha webhook ──► agentd local HTTP
 - One of the supported agent CLIs installed and authenticated: `claude`, `codex`, `gemini`, `codebuddy`, or `pi`.
 - A supported terminal multiplexer/emulator (auto-detected, in priority order):
   - **tmux** — works out of the box.
-  - **Rex** — start mecha from a Rex terminal; mecha uses the `rex` CLI and the terminal's `REX_SERVER` / `REX_SESSION` / `REX_BLOCK` context to split beside the Coordinator.
+  - **Rex** — start mecha from a Rex terminal; mecha uses the `rex` CLI and the terminal's `REX_BLOCK` (plus optional `REX_SERVER`) context to split beside the Coordinator.
   - **iTerm2** — requires the Python API: **Preferences** (`⌘,`) → **General** → **Magic** → enable **✓ Enable Python API**.
   - **Ghostty** — panes are driven via AppleScript, so a recent version with AppleScript support is required; on first spawn, macOS will ask for Automation permission for Ghostty — allow it.
 

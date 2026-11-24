@@ -638,11 +638,11 @@ type Handle interface {
 | 后端 | Match 条件 | 平台 |
 |---|---|---|
 | tmux | `TMUX` 环境变量非空 **且** `tmux` binary 存在 | macOS / Linux |
-| Rex | `REX_SERVER`、`REX_SESSION`、`REX_BLOCK` 均非空 **且** `rex` binary 存在 | macOS |
+| Rex | `REX_BLOCK` 非空（`REX_SERVER` 可选） **且** `rex` binary 存在 | macOS |
 | iTerm2 | `TERM_PROGRAM`（小写）包含 `iterm` | macOS |
 | Ghostty | `TERM_PROGRAM`（小写）包含 `ghostty` | macOS |
 
-**Anchor 机制**：四个后端都钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，Rex 用 `REX_SERVER` / `REX_SESSION` / `REX_BLOCK`，iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 在 `New()` 用 `ps`/`tty` 同步捕获进程的控制终端 tty，并在首次 Spawn 时通过 AppleScript 终端列表按 tty 懒解析出唯一 terminal id），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。anchor 不可用时四个后端一律 fail closed：返回明确错误且不创建 pane，绝不回退到 active/current focus。`New()` 阶段 anchor 不可用（`TMUX_PANE`/Rex 环境变量/`ITERM_SESSION_ID` 为空、Ghostty 取不到控制 tty）会包装 `driver.ErrAnchorUnavailable`：显式 `Kind` 返回该 anchor 错误、绝不回退；auto 跳过该后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
+**Anchor 机制**：四个后端都钉住 coordinator 所在的 pane/session/terminal（tmux 用 `TMUX_PANE`，Rex 用 `REX_BLOCK`（隐含 session），iTerm2 解析 `ITERM_SESSION_ID` 取 GUID，Ghostty 在 `New()` 用 `ps`/`tty` 同步捕获进程的控制终端 tty，并在首次 Spawn 时通过 AppleScript 终端列表按 tty 懒解析出唯一 terminal id），保证用户切换窗口/标签后 Spawn 仍落在 coordinator 处。anchor 不可用时四个后端一律 fail closed：返回明确错误且不创建 pane，绝不回退到 active/current focus。`New()` 阶段 anchor 不可用（`TMUX_PANE`/Rex 环境变量/`ITERM_SESSION_ID` 为空、Ghostty 取不到控制 tty）会包装 `driver.ErrAnchorUnavailable`：显式 `Kind` 返回该 anchor 错误、绝不回退；auto 跳过该后端，仅在 `AllowHeadless` 时回退 headless，否则返回 `ErrUnsupported`（保留 anchor 原因）。
 
 **driver.Chain**：`[]string` 栈，按分割顺序记录已 spawn pane 的原生 ID；后续分割以 `Last()` 为目标；Kill 时无论成败都 Remove（防 stale ID 成为后续分割目标）。
 

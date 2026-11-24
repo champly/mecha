@@ -32,11 +32,10 @@ func TestSpawnUsesPinnedAnchorAndSplitsDown(t *testing.T) {
 	}
 
 	r := &Rex{
-		binary:    "/opt/rex/bin/rex",
-		server:    "unix:///tmp/rex.sock",
-		sessionID: "session:work",
-		anchorID:  "block:coordinator",
-		run:       run,
+		binary:   "/opt/rex/bin/rex",
+		server:   "unix:///tmp/rex.sock",
+		anchorID: "block:coordinator",
+		run:      run,
 	}
 	env := []string{"MECHA_ROLE=architect"}
 	h1, err := r.Spawn(context.Background(), driver.Spec{
@@ -63,9 +62,8 @@ func TestSpawnUsesPinnedAnchorAndSplitsDown(t *testing.T) {
 	}
 
 	wantFirst := []string{
-		"-S", "unix:///tmp/rex.sock",
 		"split",
-		"-s", "session:work",
+		"-S", "unix:///tmp/rex.sock",
 		"-b", "block:coordinator",
 		"--split=right",
 		"--focus=false",
@@ -86,9 +84,8 @@ func TestSpawnUsesPinnedAnchorAndSplitsDown(t *testing.T) {
 	}
 
 	wantSecond := []string{
-		"-S", "unix:///tmp/rex.sock",
 		"split",
-		"-s", "session:work",
+		"-S", "unix:///tmp/rex.sock",
 		"-b", "block:child-1",
 		"--split=below",
 		"--focus=false",
@@ -114,10 +111,9 @@ func TestSpawnRejectsInvalidResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &Rex{
-				binary:    "rex",
-				server:    "local",
-				sessionID: "session:work",
-				anchorID:  "block:coordinator",
+				binary:   "rex",
+				server:   "local",
+				anchorID: "block:coordinator",
 				run: func(context.Context, string, []string, []string) (string, error) {
 					return tt.out, nil
 				},
@@ -135,9 +131,8 @@ func TestSpawnRejectsInvalidResult(t *testing.T) {
 func TestKillClosesBlockAndRemovesChainEntry(t *testing.T) {
 	var got []string
 	r := &Rex{
-		binary:    "rex",
-		server:    "local",
-		sessionID: "session:work",
+		binary: "rex",
+		server: "local",
 		blocks: func() driver.Chain {
 			var chain driver.Chain
 			chain.Push("block:child")
@@ -153,7 +148,7 @@ func TestKillClosesBlockAndRemovesChainEntry(t *testing.T) {
 	if err == nil {
 		t.Fatal("Kill: expected close error, got nil")
 	}
-	want := []string{"-S", "local", "block", "close", "-s", "session:work", "block:child"}
+	want := []string{"block", "close", "-S", "local", "block:child"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Kill args = %#v, want %#v", got, want)
 	}
@@ -192,5 +187,22 @@ func TestResolveBinaryUsesRexBinDir(t *testing.T) {
 	}
 	if got != path {
 		t.Errorf("resolveBinary = %q, want %q", got, path)
+	}
+}
+func TestNewWithBlockOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REX_BIN_DIR", dir)
+	t.Setenv("REX_SERVER", "")
+	t.Setenv("REX_SESSION", "")
+	t.Setenv("REX_BLOCK", "block:coordinator")
+
+	if !Match() {
+		t.Fatal("Match with only REX_BLOCK = false, want true")
+	}
+	if _, err := New(); err != nil {
+		t.Fatalf("New with only REX_BLOCK: %v", err)
 	}
 }

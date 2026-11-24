@@ -19,13 +19,12 @@ const prefix = "rex"
 
 // Rex is a driver.Backend backed by the rex CLI.
 type Rex struct {
-	mu        sync.Mutex
-	binary    string
-	server    string
-	sessionID string
-	anchorID  string
-	blocks    driver.Chain
-	run       func(context.Context, string, []string, []string) (string, error)
+	mu       sync.Mutex
+	binary   string
+	server   string
+	anchorID string
+	blocks   driver.Chain
+	run      func(context.Context, string, []string, []string) (string, error)
 }
 
 type splitResult struct {
@@ -33,23 +32,12 @@ type splitResult struct {
 }
 
 // New creates a Rex provider pinned to the terminal running this process.
-// REX_SERVER, REX_SESSION, and REX_BLOCK are set by Rex for every terminal.
+// Rex only guarantees REX_BLOCK for every terminal; the block implies its
+// session. REX_SERVER is optional and the CLI locates the server when absent.
 func New() (driver.Backend, error) {
-	server := os.Getenv("REX_SERVER")
-	sessionID := os.Getenv("REX_SESSION")
 	anchorID := os.Getenv("REX_BLOCK")
-	var missing []string
-	if server == "" {
-		missing = append(missing, "REX_SERVER")
-	}
-	if sessionID == "" {
-		missing = append(missing, "REX_SESSION")
-	}
 	if anchorID == "" {
-		missing = append(missing, "REX_BLOCK")
-	}
-	if len(missing) > 0 {
-		err := fmt.Errorf("term/rex: %s is empty", strings.Join(missing, ", "))
+		err := errors.New("term/rex: REX_BLOCK is empty")
 		return nil, fmt.Errorf("%w: %w", driver.ErrAnchorUnavailable, err)
 	}
 
@@ -58,20 +46,17 @@ func New() (driver.Backend, error) {
 		return nil, fmt.Errorf("term/rex: %w", err)
 	}
 	return &Rex{
-		binary:    binary,
-		server:    server,
-		sessionID: sessionID,
-		anchorID:  anchorID,
-		run:       runRex,
+		binary:   binary,
+		server:   os.Getenv("REX_SERVER"),
+		anchorID: anchorID,
+		run:      runRex,
 	}, nil
 }
 
 // Match reports whether this process is running in a Rex terminal and the rex
 // CLI can be found.
 func Match() bool {
-	if os.Getenv("REX_SERVER") == "" ||
-		os.Getenv("REX_SESSION") == "" ||
-		os.Getenv("REX_BLOCK") == "" {
+	if os.Getenv("REX_BLOCK") == "" {
 		return false
 	}
 	_, err := resolveBinary()
@@ -91,9 +76,6 @@ func (r *Rex) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error
 
 	if r.anchorID == "" {
 		return nil, errors.New("term/rex: empty anchor block")
-	}
-	if r.sessionID == "" {
-		return nil, errors.New("term/rex: empty session")
 	}
 
 	direction := "below"
@@ -118,21 +100,28 @@ func (r *Rex) Spawn(ctx context.Context, spec driver.Spec) (driver.Handle, error
 }
 
 func (r *Rex) splitArgs(target, direction string, spec driver.Spec) []string {
-	args := []string{
-		"-S", r.server,
-		"split",
-		"-s", r.sessionID,
+	args := r.withServer("split")
+	args = append(args,
 		"-b", target,
-		"--split=" + direction,
+		"--split="+direction,
 		"--focus=false",
 		"--json",
-	}
+	)
 	if spec.WorkDir != "" {
 		args = append(args, "--cwd", spec.WorkDir)
 	}
 	if len(spec.Command) > 0 {
 		args = append(args, "--shell=none", "--")
 		args = append(args, spec.Command...)
+	}
+	return args
+}
+
+// withServer returns the subcommand followed by -S when REX_SERVER is known.
+func (r *Rex) withServer(subcmd ...string) []string {
+	args := append([]string(nil), subcmd...)
+	if r.server != "" {
+		args = append(args, "-S", r.server)
 	}
 	return args
 }
@@ -153,13 +142,9 @@ func (r *Rex) Kill(ctx context.Context, h driver.Handle) error {
 	if h == nil || h.PaneID() == "" {
 		return errors.New("term/rex: empty block id")
 	}
-	if r.server == "" || r.sessionID == "" {
-		return errors.New("term/rex: missing server or session")
-	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	args := []string{"-S", r.server, "block", "close", "-s", r.sessionID, h.PaneID()}
+	args := append(r.withServer("block", "close"), h.PaneID())
 	_, err := r.runner()(ctx, r.binary, args, nil)
 	r.blocks.Remove(h.PaneID())
 	return err

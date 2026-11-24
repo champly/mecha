@@ -103,11 +103,17 @@ func paneCount(ctx context.Context) (int, error) {
 		}
 		return n, nil
 	}
-	if os.Getenv("REX_SERVER") != "" && os.Getenv("REX_SESSION") != "" {
-		out, err := exec.CommandContext(ctx,
-			"rex", "-S", os.Getenv("REX_SERVER"),
-			"block", "ls", "-s", os.Getenv("REX_SESSION"), "--json",
-		).CombinedOutput()
+	if os.Getenv("REX_BLOCK") != "" {
+		scope := os.Getenv("REX_SESSION")
+		if scope == "" {
+			scope = os.Getenv("REX_BLOCK")
+		}
+		args := []string{"block", "ls"}
+		if server := os.Getenv("REX_SERVER"); server != "" {
+			args = append(args, "-S", server)
+		}
+		args = append(args, "-s", scope, "--json")
+		out, err := exec.CommandContext(ctx, "rex", args...).CombinedOutput()
 		if err != nil {
 			return 0, fmt.Errorf("rex block ls: %w: %s", err, strings.TrimSpace(string(out)))
 		}
@@ -183,7 +189,7 @@ func TestNewRexSelection(t *testing.T) {
 	}
 	t.Setenv("REX_BIN_DIR", dir)
 	t.Setenv("REX_SERVER", "unix:///tmp/rex.sock")
-	t.Setenv("REX_SESSION", "session:work")
+	t.Setenv("REX_SESSION", "")
 	t.Setenv("REX_BLOCK", "block:coordinator")
 
 	backend, err := term.New(term.Options{Kind: "rex"})
